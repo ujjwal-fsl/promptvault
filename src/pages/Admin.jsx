@@ -2,10 +2,11 @@ import { useState } from 'react';
 import { useAuth } from '@/lib/AuthContext';
 import { promptService } from '@/services/promptService';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import AdminPromptRow from '@/components/admin/AdminPromptRow';
 import AdminPromptForm from '@/components/admin/AdminPromptForm';
 import EmptyState from '@/components/EmptyState';
-import { RefreshCw, Search, Plus, Share, LogOut } from 'lucide-react';
+import { RefreshCw, Search } from 'lucide-react';
 import { createPageUrl } from '@/utils';
 import { authService } from '@/services/authService';
 
@@ -15,7 +16,6 @@ export default function Admin() {
 
   const [search, setSearch] = useState('');
   const [editingPrompt, setEditingPrompt] = useState(null);
-  const [isCreating, setIsCreating] = useState(false);
   const [flashId, setFlashId] = useState(null);
   const [shareCopied, setShareCopied] = useState(false);
 
@@ -41,7 +41,6 @@ export default function Admin() {
 
   const handleEdit = (prompt) => {
     setEditingPrompt(prompt);
-    setIsCreating(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -51,7 +50,6 @@ export default function Admin() {
 
   const handleSaved = () => {
     setEditingPrompt(null);
-    setIsCreating(false);
     queryClient.invalidateQueries({ queryKey: ['admin-prompts', user?.id] });
   };
 
@@ -88,61 +86,56 @@ export default function Admin() {
   );
 
   return (
-    <div className="min-h-screen bg-background pb-20">
+    <div className="min-h-screen bg-background font-inter">
       {/* Header */}
-      <header className="sticky top-0 z-40 bg-background/80 backdrop-blur-md border-b border-border">
-        <div className="max-w-4xl mx-auto px-6 py-4 flex items-start justify-between">
+      <header className="border-b border-border px-6 md:px-8 pt-12 pb-8">
+        <div className="flex items-start justify-between gap-4">
           <div>
-            <h1 className="font-mono text-lg font-bold uppercase tracking-widest text-foreground">
-              Manager
+            <h1 className="font-mono font-bold text-2xl md:text-3xl tracking-tighter text-foreground">
+              Command Center
             </h1>
-            <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground mt-1">
-              {activePrompts.length} active prompts
+            <p className="font-mono text-xs text-muted-foreground mt-2 uppercase tracking-widest">
+              {activePrompts.length} prompts in vault
             </p>
           </div>
-          <div className="flex items-center gap-4 pt-1">
-            <button
-              onClick={handleCopyLink}
-              disabled={shareCopied}
-              className="flex items-center gap-2 px-4 py-2 bg-secondary text-secondary-foreground font-mono text-xs uppercase tracking-widest hover:bg-secondary/80 transition-colors disabled:opacity-50"
+
+          <div className="flex items-center gap-6 pt-1">
+            <Link
+              to="/"
+              className="font-mono text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
             >
-              <Share className="h-4 w-4" />
-              <span>{shareCopied ? 'Copied Link' : 'Share Vault'}</span>
-            </button>
+              VIEW VAULT →
+            </Link>
 
             <button
-              onClick={() => { setIsCreating(true); setEditingPrompt(null); }}
-              className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground font-mono text-xs uppercase tracking-widest hover:opacity-90 transition-opacity"
+              onClick={handleCopyLink}
+              className={`font-mono text-xs uppercase tracking-widest border px-4 py-2 transition-colors ${
+                shareCopied
+                  ? 'bg-green-600 text-white border-green-600'
+                  : 'text-primary border-primary hover:bg-primary hover:text-primary-foreground'
+              }`}
             >
-              <Plus className="h-4 w-4" />
-              <span>New Prompt</span>
+              {shareCopied ? 'Link Copied!' : 'Share Vault'}
             </button>
 
             <button
               onClick={handleLogout}
-              className="text-muted-foreground hover:text-foreground font-mono text-xs uppercase tracking-widest transition-colors flex items-center gap-2 ml-2"
-              title="Log Out"
+              className="font-mono text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
             >
-              <LogOut className="h-4 w-4" />
-              <span className="hidden sm:inline">Log Out</span>
+              Log Out
             </button>
           </div>
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto mt-8">
+      <main className="mt-8">
         {/* Form Container */}
-        <div className={`
-          overflow-hidden transition-all duration-500 ease-\\[cubic-bezier(0.23,1,0.32,1)\\]
-          ${(isCreating || editingPrompt) ? 'max-h-[800px] mb-8 opacity-100' : 'max-h-0 mb-0 opacity-0'}
-        `}>
-          {(isCreating || editingPrompt) && (
-            <AdminPromptForm
-              editingPrompt={editingPrompt}
-              onSaved={handleSaved}
-              onCancel={() => { setIsCreating(false); setEditingPrompt(null); }}
-            />
-          )}
+        <div className="px-6 md:px-8 mb-8">
+          <AdminPromptForm
+            editingPrompt={editingPrompt}
+            onSaved={handleSaved}
+            onCancel={() => setEditingPrompt(null)}
+          />
         </div>
 
         {/* Search */}
