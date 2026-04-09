@@ -88,7 +88,14 @@ export default function Admin() {
   return (
     <div className="min-h-screen bg-background font-inter">
       {/* Header */}
-      <header className="border-b border-border px-6 md:px-8 pt-12 pb-8">
+      <header className="relative border-b border-border px-6 md:px-8 pt-12 pb-8">
+        <Link
+          to="/"
+          className="absolute top-6 right-6 md:right-8 font-mono text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
+        >
+          VIEW VAULT →
+        </Link>
+
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="font-mono font-bold text-2xl md:text-3xl tracking-tighter text-foreground">
@@ -100,13 +107,6 @@ export default function Admin() {
           </div>
 
           <div className="flex items-center gap-6 pt-1">
-            <Link
-              to="/"
-              className="font-mono text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
-            >
-              VIEW VAULT →
-            </Link>
-
             <button
               onClick={handleCopyLink}
               className={`font-mono text-xs uppercase tracking-widest border px-4 py-2 transition-colors ${
@@ -128,9 +128,9 @@ export default function Admin() {
         </div>
       </header>
 
-      <main className="mt-8">
+      <main>
         {/* Form Container */}
-        <div className="px-6 md:px-8 mb-8">
+        <div className="px-6 md:px-8">
           <AdminPromptForm
             editingPrompt={editingPrompt}
             onSaved={handleSaved}
