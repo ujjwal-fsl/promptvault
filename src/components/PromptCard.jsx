@@ -35,7 +35,7 @@ export default function PromptCard({ prompt }) {
       onMouseLeave={() => setHovered(false)}
       aria-label={`Copy ${prompt.name} to clipboard`}
       className={`
-        group relative w-full text-left border border-border min-h-[120px] p-6
+        group relative w-full text-left border border-border min-h-[140px] p-6
         transition-colors duration-100 cursor-pointer
         focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary focus-visible:-outline-offset-2
         ${copied
@@ -54,7 +54,7 @@ export default function PromptCard({ prompt }) {
             animate={{ opacity: 1 }}
             exit={reducedMotion ? { opacity: 0 } : { opacity: 0 }}
             transition={{ duration: 0.1 }}
-            className="flex flex-col justify-center h-full"
+            className="flex items-center justify-center h-full"
           >
             <span className="font-mono text-sm tracking-widest uppercase">
               Copied to clipboard
@@ -67,7 +67,7 @@ export default function PromptCard({ prompt }) {
             animate={{ opacity: 1 }}
             exit={reducedMotion ? { opacity: 0 } : { opacity: 0 }}
             transition={{ duration: 0.1 }}
-            className="flex flex-col h-full"
+            className="flex flex-col justify-between h-full"
           >
             <span className="font-mono font-semibold text-base tracking-tight leading-snug">
               {prompt.name}
