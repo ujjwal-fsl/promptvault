@@ -33,7 +33,7 @@ export default function SharedVault() {
       
       {/* Header */}
       <header className="sticky top-0 z-40 bg-background/80 backdrop-blur-md border-b border-border">
-        <div className="max-w-5xl mx-auto px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="px-6 md:px-8 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <button 
               onClick={() => navigate('/')}
@@ -69,7 +69,7 @@ export default function SharedVault() {
       </header>
 
       {/* Main Content */}
-      <main className="flex-grow w-full max-w-5xl mx-auto px-6 py-10">
+      <main className="flex-grow w-full px-6 md:px-8 py-10">
         
         <div className="mb-8 border-l-2 border-primary pl-4">
           <h2 className="text-xs uppercase tracking-widest text-muted-foreground mb-1">Status</h2>
