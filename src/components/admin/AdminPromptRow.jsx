@@ -39,9 +39,9 @@ export default function AdminPromptRow({ prompt, onEdit, onDelete, flashId }) {
   return (
     <div
       className={`
-        border-b border-border px-6 md:px-8 py-4
-        flex items-start gap-4 md:gap-8 group transition-colors duration-300
-        ${isFlash ? 'bg-success/10' : 'hover:bg-secondary/30'}
+        relative border-b border-border px-6 md:px-8 py-4 min-h-[80px]
+        flex items-center gap-4 md:gap-8 group transition-colors duration-300
+        ${isFlash ? 'bg-success/10' : 'hover:bg-muted/30'}
       `}
     >
       {/* Content */}

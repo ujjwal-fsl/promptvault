@@ -106,10 +106,10 @@ export default function Admin() {
             </p>
           </div>
 
-          <div className="flex items-center gap-6 pt-1">
+          <div className="flex items-center gap-4 pt-1">
             <button
               onClick={handleCopyLink}
-              className={`font-mono text-xs uppercase tracking-widest border px-4 py-2 transition-colors ${
+              className={`font-mono text-xs uppercase tracking-widest border px-4 py-2 transition-all duration-200 ${
                 shareCopied
                   ? 'bg-green-600 text-white border-green-600'
                   : 'text-primary border-primary hover:bg-primary hover:text-primary-foreground'
@@ -139,15 +139,15 @@ export default function Admin() {
         </div>
 
         {/* Search */}
-        <div className="px-6 md:px-8 mb-6">
+        <div className="px-6 md:px-8 mb-8">
           <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <input
               type="text"
               placeholder="Search prompts..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full bg-transparent border-b border-border pl-12 pr-4 py-4 font-mono text-sm text-foreground focus:outline-none focus:border-primary transition-colors placeholder:text-muted-foreground/50"
+              className="w-full bg-transparent border-b border-border pl-10 pr-4 py-3 font-mono text-sm text-muted-foreground focus:text-foreground focus:outline-none focus:border-foreground transition-colors placeholder:text-muted-foreground/50"
             />
           </div>
         </div>

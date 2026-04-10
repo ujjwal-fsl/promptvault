@@ -44,7 +44,7 @@ export default function AdminPromptForm({ editingPrompt, onSaved, onCancel }) {
 
   return (
     <form onSubmit={handleSubmit} className="border-b border-border bg-secondary/30">
-      <div className="px-6 md:px-8 py-6 space-y-4">
+      <div className="px-6 md:px-8 py-6 space-y-5">
         <div className="flex items-center justify-between">
           <span className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
             {editingPrompt ? 'Edit Prompt' : 'New Prompt'}
@@ -68,7 +68,7 @@ export default function AdminPromptForm({ editingPrompt, onSaved, onCancel }) {
             placeholder="Prompt name"
             required
             maxLength={80}
-            className="w-full bg-background border border-border px-4 py-3 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
+            className="w-full bg-background border border-border px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-foreground transition-colors"
           />
           <div className="mt-1 text-right font-mono text-[10px] text-muted-foreground">
             {name.length}/80
@@ -83,7 +83,7 @@ export default function AdminPromptForm({ editingPrompt, onSaved, onCancel }) {
             required
             maxLength={4000}
             rows={5}
-            className="w-full bg-background border border-border px-4 py-3 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary resize-y"
+            className="w-full bg-background border border-border px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-foreground transition-colors resize-none leading-relaxed"
           />
           <div className="mt-1 text-right font-mono text-[10px] text-muted-foreground">
             {body.length}/4000
@@ -93,7 +93,7 @@ export default function AdminPromptForm({ editingPrompt, onSaved, onCancel }) {
         <button
           type="submit"
           disabled={saving || !name.trim() || !body.trim()}
-          className="bg-primary text-primary-foreground font-mono text-xs uppercase tracking-widest px-6 py-3 hover:opacity-90 transition-opacity disabled:opacity-40"
+          className="mt-1 bg-primary text-primary-foreground font-mono text-xs uppercase tracking-widest px-6 py-3 hover:opacity-90 transition-opacity disabled:opacity-40"
         >
           {saving ? 'Saving…' : editingPrompt ? 'Update Prompt' : 'Save Prompt'}
         </button>
