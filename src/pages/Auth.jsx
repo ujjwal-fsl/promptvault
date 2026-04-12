@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { authService } from '@/services/authService';
 
 // ─── Google SVG Icon ──────────────────────────────────────────────────────────
 const GoogleIcon = () => (
@@ -341,6 +343,8 @@ export default function Auth() {
   const [errors, setErrors] = useState(/** @type {AuthErrors} */({}));
   const usernameRef = useRef(null);
 
+  const navigate = useNavigate();
+
   // Inject styles once
   useEffect(() => {
     const id = 'pv-auth-styles';
@@ -376,9 +380,30 @@ export default function Auth() {
     const errs = validate();
     if (Object.keys(errs).length) { setErrors(errs); return; }
     setLoading(true);
-    // TODO: wire to real auth
-    await new Promise((r) => setTimeout(r, 1800));
-    setLoading(false);
+    try {
+      if (mode === 'signup') {
+        const res = await authService.signup(fields.email, fields.password, fields.username.trim());
+        if (res?.user) navigate('/admin');
+      } else {
+        const res = await authService.login(fields.email, fields.password);
+        if (res?.user) navigate('/admin');
+      }
+    } catch (err) {
+      console.error(err);
+      setErrors({ email: err.message || 'Authentication failed' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    try {
+      setLoading(true);
+      await authService.loginWithGoogle();
+    } catch (err) {
+      console.error(err);
+      setLoading(false);
+    }
   };
 
   /**
@@ -531,7 +556,7 @@ export default function Auth() {
             type="button"
             className="pv-btn-google"
             disabled={loading}
-            onClick={() => { /* TODO: Google OAuth */ }}
+            onClick={handleGoogleLogin}
             aria-label="Continue with Google"
           >
             <GoogleIcon />

@@ -16,12 +16,12 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const checkAppState = async () => {
-    checkUserAuth();
+    await checkUserAuth();
   };
 
-  const checkUserAuth = () => {
+  const checkUserAuth = async () => {
     setIsLoadingAuth(true);
-    const currentUser = authService.getCurrentUser();
+    const currentUser = await authService.getCurrentUser();
     if (currentUser) {
       setUser(currentUser);
       setIsAuthenticated(true);
@@ -32,8 +32,8 @@ export const AuthProvider = ({ children }) => {
     setIsLoadingAuth(false);
   };
 
-  const logout = (shouldRedirect = true) => {
-    authService.logout();
+  const logout = async (shouldRedirect = true) => {
+    await authService.logout();
     setUser(null);
     setIsAuthenticated(false);
     if (shouldRedirect) {
@@ -41,11 +41,10 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const navigateToLogin = () => {
-    authService.autoLogin();
-    checkUserAuth();
+  const navigateToLogin = async () => {
+    await checkUserAuth();
     if (window.location.pathname === '/' || !window.location.pathname) {
-      window.location.href = '/admin';
+      window.location.href = '/auth';
     } else {
       window.location.reload();
     }
