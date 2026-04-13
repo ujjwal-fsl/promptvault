@@ -17,8 +17,7 @@ export default function Admin() {
   const [search, setSearch] = useState('');
   const [editingPrompt, setEditingPrompt] = useState(null);
   const [flashId, setFlashId] = useState(null);
-  const [shareCopied, setShareCopied] = useState(false);
-  const [publicShareCopied, setPublicShareCopied] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const { data: prompts = [], isLoading } = useQuery({
     queryKey: ['admin-prompts'],
@@ -75,41 +74,24 @@ export default function Admin() {
     queryClient.invalidateQueries({ queryKey: ['landing-prompts'] });
   };
 
-  const handleCopyLink = async () => {
-    if (!user?.vault_id) return;
-    const link = createPageUrl(`vault/${user.vault_id}`);
+  const handleShare = async () => {
     try {
-      await navigator.clipboard.writeText(link);
-      setShareCopied(true);
-      setTimeout(() => setShareCopied(false), 2500);
-    } catch (err) {
-      const ta = document.createElement('textarea');
-      ta.value = link;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-      setShareCopied(true);
-      setTimeout(() => setShareCopied(false), 2500);
-    }
-  };
+      if (!user?.username) {
+        alert("Please set a username first.");
+        return;
+      }
 
-  const handleCopyPublicLink = async () => {
-    if (!user?.username) return;
-    const link = `${window.location.origin}/public/${user.username}`;
-    try {
-      await navigator.clipboard.writeText(link);
-      setPublicShareCopied(true);
-      setTimeout(() => setPublicShareCopied(false), 2500);
+      const url = `${window.location.origin}/public/${user.username}`;
+      console.log("COPYING:", url);
+
+      await navigator.clipboard.writeText(url);
+
+      setCopied(true);
+
+      setTimeout(() => setCopied(false), 2000);
+
     } catch (err) {
-      const ta = document.createElement('textarea');
-      ta.value = link;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-      setPublicShareCopied(true);
-      setTimeout(() => setPublicShareCopied(false), 2500);
+      console.error("Clipboard error:", err);
     }
   };
 
@@ -146,28 +128,15 @@ export default function Admin() {
 
           <div className="flex items-center gap-4 pt-1">
             <button
-              onClick={handleCopyLink}
+              onClick={handleShare}
               className={`font-mono text-xs uppercase tracking-widest border px-4 py-2 transition-all duration-200 ${
-                shareCopied
+                copied
                   ? 'bg-green-600 text-white border-green-600'
                   : 'text-primary border-primary hover:bg-primary hover:text-primary-foreground'
               }`}
             >
-              {shareCopied ? 'Link Copied!' : 'Share Vault'}
+              {copied ? 'LINK COPIED!' : 'SHARE PUBLIC VAULT'}
             </button>
-
-            {isCreator && (
-              <button
-                onClick={handleCopyPublicLink}
-                className={`font-mono text-xs uppercase tracking-widest border px-4 py-2 transition-all duration-200 ${
-                  publicShareCopied
-                    ? 'bg-blue-600 text-white border-blue-600'
-                    : 'text-primary border-primary hover:bg-primary hover:text-primary-foreground'
-                }`}
-              >
-                {publicShareCopied ? 'Link Copied!' : 'Share Public Vault'}
-              </button>
-            )}
 
             <Link
               to="/profile"

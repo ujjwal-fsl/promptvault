@@ -16,16 +16,8 @@ export default function PromptCard({ prompt }) {
       setCopied(true);
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       timeoutRef.current = setTimeout(() => setCopied(false), 1500);
-    } catch {
-      const ta = document.createElement('textarea');
-      ta.value = prompt.body;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-      setCopied(true);
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      timeoutRef.current = setTimeout(() => setCopied(false), 1500);
+    } catch (err) {
+      console.error("Clipboard error:", err);
     }
 
     // Usage tracking

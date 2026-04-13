@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabase';
 import { authService } from '@/services/authService';
 import { getPublicPromptsByUserId } from '@/services/promptService';
 import { Search, RefreshCw, Layers } from 'lucide-react';
@@ -13,12 +14,18 @@ export default function PublicVault() {
   const [search, setSearch] = useState('');
 
   // Fetch user profile
-  const { data: profile, isLoading: isProfileLoading, isError: isProfileError } = useQuery({
+  const { data: profile, isLoading: isProfileLoading } = useQuery({
     queryKey: ['public-profile', username],
     queryFn: async () => {
-      const data = await authService.getProfileByUsername(username);
-      if (!data) throw new Error("Profile not found");
-      return data;
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('username', username)
+        .maybeSingle();
+
+      console.log("Fetched profile:", data);
+      
+      return data || null;
     },
     retry: 1
   });
@@ -27,14 +34,21 @@ export default function PublicVault() {
   const { data: prompts = [], isLoading: isPromptsLoading } = useQuery({
     queryKey: ['public-prompts', profile?.id],
     queryFn: async () => {
-      return await getPublicPromptsByUserId(profile.id);
+      const { data, error } = await supabase
+        .from('prompts')
+        .select('*')
+        .eq('created_by', profile.id)
+        .order('created_at', { ascending: false });
+        
+      if (error) throw error;
+      return data || [];
     },
-    enabled: !!profile?.id && !!profile?.is_public_profile,
+    enabled: !!profile?.id,
   });
 
   const isLoading = isProfileLoading || isPromptsLoading;
 
-  if (isProfileError || (profile && !profile.is_public_profile)) {
+  if (!isProfileLoading && !profile) {
     return (
       <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 text-center font-mono">
         <h1 className="text-4xl text-foreground font-bold tracking-tighter mb-4 uppercase">USER NOT FOUND</h1>
@@ -108,7 +122,7 @@ export default function PublicVault() {
              <span className="font-mono text-xs uppercase tracking-widest">Retrieving vault data</span>
            </div>
         ) : filteredPrompts.length === 0 ? (
-          <EmptyState message={search ? "No matches found in this vault." : "This creator hasn't published any public prompts yet."} />
+          <EmptyState message={search ? "No matches found in this vault." : "No prompts yet"} />
         ) : (
           <div>
             <div className="w-full border-b border-border py-3 px-6 md:px-12 bg-background flex items-center">
