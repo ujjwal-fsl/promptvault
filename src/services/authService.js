@@ -126,5 +126,50 @@ export const authService = {
       console.error('updateUsername error:', e);
       throw e;
     }
+  },
+
+  updateProfile: async (userId, profileData) => {
+    try {
+      if (profileData.username) {
+        const { data: existing, error: checkError } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('username', profileData.username)
+          .maybeSingle();
+        if (checkError) throw checkError;
+        if (existing && existing.id !== userId) {
+          throw new Error('Username already taken');
+        }
+      }
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .update(profileData)
+        .eq('id', userId)
+        .select()
+        .single();
+        
+      if (error) throw error;
+      return data;
+    } catch (e) {
+      console.error('updateProfile error:', e);
+      throw e;
+    }
+  },
+
+  getProfileByUsername: async (username) => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('username', username)
+        .single();
+        
+      if (error) throw error;
+      return data;
+    } catch (e) {
+      console.error('getProfileByUsername error:', e);
+      return null;
+    }
   }
 };

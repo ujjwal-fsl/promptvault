@@ -2,15 +2,28 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { promptService, getUserPrompts } from '@/services/promptService';
 import { authService } from '@/services/authService';
+import { useAuth } from '@/lib/AuthContext';
 import PromptCard from '@/components/PromptCard';
 import CornerNav from '@/components/CornerNav';
 import EmptyState from '@/components/EmptyState';
-import { Search, RefreshCw } from 'lucide-react';
+import { Search, RefreshCw, CheckSquare, Square } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 export default function Landing() {
   const [search, setSearch] = useState('');
+  const [publicView, setPublicView] = useState(() => {
+    return localStorage.getItem('publicView') === 'true';
+  });
   const navigate = useNavigate();
+  const { user } = useAuth();
+  
+  const isCreator = user?.plan === 'CREATOR' || user?.plan === 'CREATOR_PLUS';
+  
+  const handleTogglePublicView = () => {
+    const newVal = !publicView;
+    setPublicView(newVal);
+    localStorage.setItem('publicView', String(newVal));
+  };
   
   const { data: prompts = [], isLoading } = useQuery({
     queryKey: ['landing-prompts'],
@@ -27,10 +40,12 @@ export default function Landing() {
 
   const activePrompts = prompts.filter(p => !p.isDeleted);
   
-  const filteredPrompts = activePrompts.filter(p => 
-    (p.name || '').toLowerCase().includes(search.toLowerCase()) || 
-    (p.body || '').toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredPrompts = activePrompts.filter(p => {
+    const matchesSearch = (p.name || '').toLowerCase().includes(search.toLowerCase()) || 
+                          (p.body || '').toLowerCase().includes(search.toLowerCase());
+    const matchesScope = publicView ? p.is_public === true : true;
+    return matchesSearch && matchesScope;
+  });
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col selection:bg-primary selection:text-primary-foreground">
@@ -66,10 +81,19 @@ export default function Landing() {
       </div>
 
       {/* Count Section */}
-      <div className="w-full border-b border-border py-4 px-6 md:px-12 bg-background flex items-center">
+      <div className="w-full border-b border-border py-4 px-6 md:px-12 bg-background flex flex-wrap gap-4 items-center justify-between">
         <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
           {filteredPrompts.length} PROMPTS
         </span>
+        {isCreator && (
+          <button
+            onClick={handleTogglePublicView}
+            className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
+          >
+            {publicView ? <CheckSquare className="w-3.5 h-3.5 text-primary" /> : <Square className="w-3.5 h-3.5" />}
+            PUBLIC VIEW
+          </button>
+        )}
       </div>
 
       {/* Prompts Grid */}

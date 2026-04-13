@@ -18,6 +18,7 @@ export default function Admin() {
   const [editingPrompt, setEditingPrompt] = useState(null);
   const [flashId, setFlashId] = useState(null);
   const [shareCopied, setShareCopied] = useState(false);
+  const [publicShareCopied, setPublicShareCopied] = useState(false);
 
   const { data: prompts = [], isLoading } = useQuery({
     queryKey: ['admin-prompts'],
@@ -93,10 +94,26 @@ export default function Admin() {
     }
   };
 
-  const handleLogout = () => {
-    authService.logout();
-    window.location.reload();
+  const handleCopyPublicLink = async () => {
+    if (!user?.username) return;
+    const link = `${window.location.origin}/public/${user.username}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      setPublicShareCopied(true);
+      setTimeout(() => setPublicShareCopied(false), 2500);
+    } catch (err) {
+      const ta = document.createElement('textarea');
+      ta.value = link;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      setPublicShareCopied(true);
+      setTimeout(() => setPublicShareCopied(false), 2500);
+    }
   };
+
+  const isCreator = user?.plan === 'CREATOR' || user?.plan === 'CREATOR_PLUS';
 
   // Filter out any internally marked Soft Deleted prompts just in case service layer lets it through
   const activePrompts = prompts.filter(p => !p.isDeleted);
@@ -139,12 +156,25 @@ export default function Admin() {
               {shareCopied ? 'Link Copied!' : 'Share Vault'}
             </button>
 
-            <button
-              onClick={handleLogout}
+            {isCreator && (
+              <button
+                onClick={handleCopyPublicLink}
+                className={`font-mono text-xs uppercase tracking-widest border px-4 py-2 transition-all duration-200 ${
+                  publicShareCopied
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'text-primary border-primary hover:bg-primary hover:text-primary-foreground'
+                }`}
+              >
+                {publicShareCopied ? 'Link Copied!' : 'Share Public Vault'}
+              </button>
+            )}
+
+            <Link
+              to="/profile"
               className="font-mono text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
             >
-              Log Out
-            </button>
+              Profile
+            </Link>
           </div>
         </div>
       </header>

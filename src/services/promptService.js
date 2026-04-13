@@ -218,3 +218,19 @@ export const searchPrompts = async (query) => {
   }
 };
 
+export const getPublicPromptsByUserId = async (userId) => {
+  try {
+    const { data: prompts, error } = await supabase
+      .from('prompts')
+      .select('*')
+      .eq('created_by', userId)
+      .eq('is_public', true)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    return prompts;
+  } catch (error) {
+    console.error('[Supabase getPublicPromptsByUserId error]', error);
+    throw error;
+  }
+};
