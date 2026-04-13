@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/AuthContext';
 import { promptService, getUserPrompts } from '@/services/promptService';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import AdminPromptRow from '@/components/admin/AdminPromptRow';
 import AdminPromptForm from '@/components/admin/AdminPromptForm';
 import EmptyState from '@/components/EmptyState';
@@ -11,8 +11,17 @@ import { createPageUrl } from '@/utils';
 import { authService } from '@/services/authService';
 
 export default function Admin() {
-  const { user } = useAuth();
+  const { user, isAuthenticated, isLoadingAuth } = useAuth();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!isLoadingAuth && !isAuthenticated) {
+      navigate('/auth', { replace: true });
+    }
+  }, [isLoadingAuth, isAuthenticated, navigate]);
+
+  if (isLoadingAuth || !isAuthenticated) return null;
 
   const [search, setSearch] = useState('');
   const [editingPrompt, setEditingPrompt] = useState(null);

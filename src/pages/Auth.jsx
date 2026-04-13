@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authService } from '@/services/authService';
+import { useAuth } from '@/lib/AuthContext';
 
 // ─── Google SVG Icon ──────────────────────────────────────────────────────────
 const GoogleIcon = () => (
@@ -344,6 +345,16 @@ export default function Auth() {
   const usernameRef = useRef(null);
 
   const navigate = useNavigate();
+  const { isAuthenticated, isLoadingAuth } = useAuth();
+
+  // Redirect authenticated users away from auth page
+  useEffect(() => {
+    if (!isLoadingAuth && isAuthenticated) {
+      navigate('/', { replace: true });
+    }
+  }, [isLoadingAuth, isAuthenticated, navigate]);
+
+  if (!isLoadingAuth && isAuthenticated) return null;
 
   // Inject styles once
   useEffect(() => {
@@ -387,10 +398,10 @@ export default function Auth() {
     try {
       if (mode === 'signup') {
         const res = await authService.signup(fields.email, fields.password, fields.username.trim(), fields.fullName.trim());
-        if (res?.user) navigate('/admin');
+        if (res?.user) navigate('/');
       } else {
         const res = await authService.login(fields.email, fields.password);
-        if (res?.user) navigate('/admin');
+        if (res?.user) navigate('/');
       }
     } catch (err) {
       console.error(err);

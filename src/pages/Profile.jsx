@@ -8,9 +8,17 @@ import { useQueryClient } from '@tanstack/react-query';
 import { User } from 'lucide-react';
 
 export default function Profile() {
-  const { user } = useAuth();
+  const { user, isAuthenticated, isLoadingAuth } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (!isLoadingAuth && !isAuthenticated) {
+      navigate('/auth', { replace: true });
+    }
+  }, [isLoadingAuth, isAuthenticated, navigate]);
+
+  if (isLoadingAuth || !isAuthenticated) return null;
 
   const [saving, setSaving] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);

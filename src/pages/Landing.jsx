@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { promptService, getUserPrompts } from '@/services/promptService';
 import { authService } from '@/services/authService';
@@ -15,7 +15,15 @@ export default function Landing() {
     return localStorage.getItem('publicView') === 'true';
   });
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, isAuthenticated, isLoadingAuth } = useAuth();
+
+  useEffect(() => {
+    if (!isLoadingAuth && !isAuthenticated) {
+      navigate('/auth', { replace: true });
+    }
+  }, [isLoadingAuth, isAuthenticated, navigate]);
+
+  if (isLoadingAuth || !isAuthenticated) return null;
   
   const isCreator = user?.plan === 'CREATOR' || user?.plan === 'CREATOR_PLUS';
   

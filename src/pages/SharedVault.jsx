@@ -2,13 +2,15 @@ import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/lib/AuthContext';
 import { Search, RefreshCw, Share2, ArrowLeft } from 'lucide-react';
 import PromptCard from '@/components/PromptCard';
 import EmptyState from '@/components/EmptyState';
 
 export default function SharedVault() {
-  const { vaultId } = useParams(); // URL param behaves as username
+  const { vaultId } = useParams();
   const navigate = useNavigate();
+  const { isAuthenticated } = useAuth();
   const [search, setSearch] = useState('');
 
   // Fetch underlying profile mapper
@@ -57,7 +59,7 @@ export default function SharedVault() {
         <div className="px-6 md:px-8 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <button 
-              onClick={() => navigate('/')}
+              onClick={() => navigate(isAuthenticated ? '/' : '/auth')}
               className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
               aria-label="Back to home"
             >
