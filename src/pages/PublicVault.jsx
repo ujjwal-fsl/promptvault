@@ -93,7 +93,7 @@ export default function PublicVault() {
                 <h1 className="text-xl md:text-2xl font-bold tracking-tighter text-foreground">
                   {profile?.full_name || username}'s
                 </h1>
-                <span className="text-sm md:text-base font-light tracking-tighter text-muted-foreground">
+                <span className="text-xs md:text-sm font-light tracking-tighter text-muted-foreground">
                   Prompt Dex
                 </span>
               </div>

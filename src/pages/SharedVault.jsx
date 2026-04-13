@@ -97,7 +97,7 @@ export default function SharedVault() {
             <h1 className="font-mono font-bold text-3xl md:text-4xl tracking-tighter text-black">
               {profile?.full_name || vaultId}'s
             </h1>
-            <span className="font-mono font-light text-lg md:text-xl tracking-tighter text-muted-foreground">
+            <span className="font-mono font-light text-sm md:text-base tracking-tighter text-muted-foreground">
               Prompt Dex
             </span>
           </div>
