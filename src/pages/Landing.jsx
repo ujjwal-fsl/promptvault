@@ -17,13 +17,18 @@ export default function Landing() {
   const navigate = useNavigate();
   const { user, isAuthenticated, isLoadingAuth } = useAuth();
 
+  // Detect Supabase email change confirmation flow
+  const params = new URLSearchParams(window.location.search);
+  const isEmailChange = params.get('type') === 'email_change';
+  const [emailChangeComplete, setEmailChangeComplete] = useState(isEmailChange);
+
   useEffect(() => {
-    if (!isLoadingAuth && !isAuthenticated) {
+    if (!isLoadingAuth && !isAuthenticated && !isEmailChange) {
       navigate('/auth', { replace: true });
     }
-  }, [isLoadingAuth, isAuthenticated, navigate]);
+  }, [isLoadingAuth, isAuthenticated, navigate, isEmailChange]);
 
-  if (isLoadingAuth || !isAuthenticated) return null;
+  if (isLoadingAuth || (!isAuthenticated && !isEmailChange)) return null;
   
   const isCreator = user?.plan === 'CREATOR' || user?.plan === 'CREATOR_PLUS';
   
@@ -58,6 +63,21 @@ export default function Landing() {
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col selection:bg-primary selection:text-primary-foreground">
       <CornerNav to="/admin" label="Admin" />
+
+      {/* Email Change Success Banner */}
+      {emailChangeComplete && (
+        <div className="w-full bg-green-600/10 border-b border-green-600/20 px-6 md:px-12 py-3 flex items-center justify-between">
+          <span className="font-mono text-[10px] uppercase tracking-widest text-green-700">
+            Email updated successfully
+          </span>
+          <button
+            onClick={() => setEmailChangeComplete(false)}
+            className="font-mono text-[10px] uppercase tracking-widest text-green-700 hover:text-green-900 transition-colors"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Hero Structure */}
       <header className="relative w-full">
