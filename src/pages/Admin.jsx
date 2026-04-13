@@ -17,7 +17,8 @@ export default function Admin() {
   const [search, setSearch] = useState('');
   const [editingPrompt, setEditingPrompt] = useState(null);
   const [flashId, setFlashId] = useState(null);
-  const [copied, setCopied] = useState(false);
+  const [vaultCopied, setVaultCopied] = useState(false);
+  const [publicCopied, setPublicCopied] = useState(false);
 
   const { data: prompts = [], isLoading } = useQuery({
     queryKey: ['admin-prompts'],
@@ -74,28 +75,39 @@ export default function Admin() {
     queryClient.invalidateQueries({ queryKey: ['landing-prompts'] });
   };
 
-  const handleShare = async () => {
+  const handleShareVault = async () => {
     try {
       if (!user?.username) {
         alert("Please set a username first.");
         return;
       }
-
-      const url = `${window.location.origin}/public/${user.username}`;
-      console.log("COPYING:", url);
-
+      const url = `${window.location.origin}/vault/${user.username}`;
+      console.log("COPYING VAULT:", url);
       await navigator.clipboard.writeText(url);
-
-      setCopied(true);
-
-      setTimeout(() => setCopied(false), 2000);
-
+      setVaultCopied(true);
+      setTimeout(() => setVaultCopied(false), 2000);
     } catch (err) {
       console.error("Clipboard error:", err);
     }
   };
 
-  const isCreator = user?.plan === 'CREATOR' || user?.plan === 'CREATOR_PLUS';
+  const handleSharePublicVault = async () => {
+    try {
+      if (!user?.username) {
+        alert("Please set a username first.");
+        return;
+      }
+      const url = `${window.location.origin}/public/${user.username}`;
+      console.log("COPYING PUBLIC VAULT:", url);
+      await navigator.clipboard.writeText(url);
+      setPublicCopied(true);
+      setTimeout(() => setPublicCopied(false), 2000);
+    } catch (err) {
+      console.error("Clipboard error:", err);
+    }
+  };
+
+  const isPremium = ['PLUS', 'CREATOR', 'CREATOR_PLUS'].includes(user?.plan);
 
   // Filter out any internally marked Soft Deleted prompts just in case service layer lets it through
   const activePrompts = prompts.filter(p => !p.isDeleted);
@@ -128,15 +140,28 @@ export default function Admin() {
 
           <div className="flex items-center gap-4 pt-1">
             <button
-              onClick={handleShare}
+              onClick={handleShareVault}
               className={`font-mono text-xs uppercase tracking-widest border px-4 py-2 transition-all duration-200 ${
-                copied
+                vaultCopied
                   ? 'bg-green-600 text-white border-green-600'
                   : 'text-primary border-primary hover:bg-primary hover:text-primary-foreground'
               }`}
             >
-              {copied ? 'LINK COPIED!' : 'SHARE PUBLIC VAULT'}
+              {vaultCopied ? 'LINK COPIED!' : 'SHARE VAULT'}
             </button>
+
+            {isPremium && (
+              <button
+                onClick={handleSharePublicVault}
+                className={`font-mono text-xs uppercase tracking-widest border px-4 py-2 transition-all duration-200 ${
+                  publicCopied
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'text-primary border-primary hover:bg-primary hover:text-primary-foreground'
+                }`}
+              >
+                {publicCopied ? 'LINK COPIED!' : 'SHARE PUBLIC VAULT'}
+              </button>
+            )}
 
             <Link
               to="/profile"

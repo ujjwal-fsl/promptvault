@@ -38,6 +38,7 @@ export default function PublicVault() {
         .from('prompts')
         .select('*')
         .eq('created_by', profile.id)
+        .eq('is_public', true)
         .order('created_at', { ascending: false });
         
       if (error) throw error;

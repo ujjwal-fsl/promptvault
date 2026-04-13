@@ -1,25 +1,46 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { promptService } from '@/services/promptService';
+import { supabase } from '@/lib/supabase';
 import { Search, RefreshCw, Share2, ArrowLeft } from 'lucide-react';
 import PromptCard from '@/components/PromptCard';
 import EmptyState from '@/components/EmptyState';
 
 export default function SharedVault() {
-  const { vaultId } = useParams();
+  const { vaultId } = useParams(); // URL param behaves as username
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
 
-  const { data: prompts = [], isLoading } = useQuery({
-    queryKey: ['shared-vault', vaultId],
+  // Fetch underlying profile mapper
+  const { data: profile, isLoading: isProfileLoading, isError: isProfileError } = useQuery({
+    queryKey: ['shared-profile', vaultId],
     queryFn: async () => {
-      if (!vaultId) return [];
-      const data = await promptService.getPromptsByVault(vaultId);
-      return data.map(p => ({ ...p, name: p.title, body: p.content }));
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('username', vaultId)
+        .maybeSingle();
+      return data || null;
     },
-    enabled: !!vaultId,
+    retry: 1
   });
+
+  const { data: prompts = [], isLoading: isPromptsLoading } = useQuery({
+    queryKey: ['shared-vault-prompts', profile?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('prompts')
+        .select('*')
+        .eq('created_by', profile.id)
+        .order('created_at', { ascending: false });
+        
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!profile?.id,
+  });
+
+  const isLoading = isProfileLoading || isPromptsLoading;
 
   const activePrompts = prompts.filter(p => !p.isDeleted);
   
@@ -50,7 +71,7 @@ export default function SharedVault() {
                 </h1>
               </div>
               <p className="text-[10px] text-muted-foreground mt-1 uppercase tracking-widest">
-                ID: {vaultId}
+                @{vaultId}
               </p>
             </div>
           </div>
@@ -71,14 +92,18 @@ export default function SharedVault() {
       {/* Main Content */}
       <main className="flex-grow w-full px-6 md:px-8 py-10">
         
-        <div className="mb-8 border-l-2 border-primary pl-4">
-          <h2 className="text-xs uppercase tracking-widest text-muted-foreground mb-1">Status</h2>
-          <p className="text-sm text-foreground">
-            {isLoading ? 'Accessing encrypted records...' : 
-             filteredPrompts.length === 0 && search ? 'No records match filter constraints.' :
-             activePrompts.length === 0 ? 'Vault is completely empty.' :
-             `${filteredPrompts.length} verified records retrieved.`}
-          </p>
+        <div className="mb-8 pl-1">
+          <div className="flex items-baseline gap-2 mb-2">
+            <h1 className="font-mono font-bold text-3xl md:text-4xl text-black">
+              {vaultId}'S
+            </h1>
+            <span className="font-mono font-light text-xl md:text-2xl text-muted-foreground">
+              PROMPT DEX
+            </span>
+          </div>
+          <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+            — {filteredPrompts.length} RECORD{filteredPrompts.length !== 1 ? 'S' : ''} —
+          </div>
         </div>
 
         {/* Grid */}
@@ -95,11 +120,11 @@ export default function SharedVault() {
           ) : filteredPrompts.length === 0 ? (
             <EmptyState message={search ? "Adjust current filtering parameters." : "No records established in this vault."} />
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-1px bg-border border border-border">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 w-full">
               {filteredPrompts.map((prompt, i) => (
                 <div 
                   key={prompt.id} 
-                  className="bg-background animate-fade-in" 
+                  className="animate-fade-in" 
                   style={{ animationDelay: `${i * 30}ms`, animationFillMode: 'both' }}
                 >
                   <PromptCard prompt={prompt} />
