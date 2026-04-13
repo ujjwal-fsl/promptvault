@@ -330,8 +330,8 @@ const styles = `
 
 // ─── Types (JSDoc — file is .jsx, not .tsx) ──────────────────────────────────
 /**
- * @typedef {{ email: string, password: string, username: string }} AuthFields
- * @typedef {{ email?: string, password?: string, username?: string }} AuthErrors
+ * @typedef {{ email: string, password: string, username: string, fullName: string }} AuthFields
+ * @typedef {{ email?: string, password?: string, username?: string, fullName?: string }} AuthErrors
  */
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -339,7 +339,7 @@ export default function Auth() {
   const [mode, setMode] = useState('login'); // 'login' | 'signup'
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [fields, setFields] = useState(/** @type {AuthFields} */({ email: '', password: '', username: '' }));
+  const [fields, setFields] = useState(/** @type {AuthFields} */({ email: '', password: '', username: '', fullName: '' }));
   const [errors, setErrors] = useState(/** @type {AuthErrors} */({}));
   const usernameRef = useRef(null);
 
@@ -371,7 +371,11 @@ export default function Auth() {
     else if (!/\S+@\S+\.\S+/.test(fields.email)) e.email = 'Enter a valid email.';
     if (!fields.password) e.password = 'Password is required.';
     else if (fields.password.length < 6) e.password = 'Min. 6 characters.';
-    if (mode === 'signup' && !fields.username.trim()) e.username = 'Username is required.';
+    
+    if (mode === 'signup') {
+      if (!fields.username.trim()) e.username = 'Username is required.';
+      if (!fields.fullName.trim()) e.fullName = 'Full Name is required.';
+    }
     return e;
   };
 
@@ -382,7 +386,7 @@ export default function Auth() {
     setLoading(true);
     try {
       if (mode === 'signup') {
-        const res = await authService.signup(fields.email, fields.password, fields.username.trim());
+        const res = await authService.signup(fields.email, fields.password, fields.username.trim(), fields.fullName.trim());
         if (res?.user) navigate('/admin');
       } else {
         const res = await authService.login(fields.email, fields.password);
@@ -463,26 +467,47 @@ export default function Auth() {
 
         <form onSubmit={handleSubmit} noValidate aria-label={mode === 'login' ? 'Login form' : 'Sign up form'}>
           <div className="pv-fields">
-            {/* Username — Sign Up only */}
+            {/* Full Name & Username — Sign Up only */}
             {mode === 'signup' && (
-              <div className="pv-field-wrap pv-field-animate">
-                <input
-                  ref={usernameRef}
-                  id="auth-username"
-                  type="text"
-                  autoComplete="username"
-                  placeholder="Username"
-                  value={fields.username}
-                  onChange={handleChange('username')}
-                  className={`pv-input${errors.username ? ' error' : ''}`}
-                  aria-invalid={!!errors.username}
-                  aria-describedby={errors.username ? 'auth-username-error' : undefined}
-                  disabled={loading}
-                />
-                {errors.username && (
-                  <p id="auth-username-error" className="pv-error-msg" role="alert">{errors.username}</p>
-                )}
-              </div>
+              <>
+                <div className="pv-field-wrap pv-field-animate">
+                  <input
+                    id="auth-fullname"
+                    type="text"
+                    autoComplete="name"
+                    placeholder="Full Name"
+                    value={fields.fullName}
+                    onChange={handleChange('fullName')}
+                    className={`pv-input${errors.fullName ? ' error' : ''}`}
+                    aria-invalid={!!errors.fullName}
+                    aria-describedby={errors.fullName ? 'auth-fullname-error' : undefined}
+                    disabled={loading}
+                    autoFocus
+                  />
+                  {errors.fullName && (
+                    <p id="auth-fullname-error" className="pv-error-msg" role="alert">{errors.fullName}</p>
+                  )}
+                </div>
+
+                <div className="pv-field-wrap pv-field-animate">
+                  <input
+                    ref={usernameRef}
+                    id="auth-username"
+                    type="text"
+                    autoComplete="username"
+                    placeholder="Username"
+                    value={fields.username}
+                    onChange={handleChange('username')}
+                    className={`pv-input${errors.username ? ' error' : ''}`}
+                    aria-invalid={!!errors.username}
+                    aria-describedby={errors.username ? 'auth-username-error' : undefined}
+                    disabled={loading}
+                  />
+                  {errors.username && (
+                    <p id="auth-username-error" className="pv-error-msg" role="alert">{errors.username}</p>
+                  )}
+                </div>
+              </>
             )}
 
             {/* Email */}

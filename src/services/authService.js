@@ -1,14 +1,14 @@
 import { supabase } from '@/lib/supabase';
 
 export const authService = {
-  signup: async (email, password, username) => {
+  signup: async (email, password, username, fullName) => {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
     });
     if (error) throw error;
     if (data.user) {
-      await authService.ensureProfile(data.user, username);
+      await authService.ensureProfile(data.user, username, fullName);
     }
     return data;
   },
@@ -33,9 +33,11 @@ export const authService = {
     return data;
   },
 
-  ensureProfile: async (user, username = null) => {
+  ensureProfile: async (user, username = null, fullName = null) => {
     if (!user) return null;
     try {
+      const parsedName = fullName || user.user_metadata?.full_name || user.user_metadata?.name || null;
+      
       const { data: profile, error } = await supabase
         .from('profiles')
         .select('*')
@@ -54,6 +56,7 @@ export const authService = {
              id: user.id,
              email: user.email,
              username: username,
+             full_name: parsedName,
              plan: 'FREE',
              created_at: new Date().toISOString()
            }])

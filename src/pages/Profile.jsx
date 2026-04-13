@@ -17,6 +17,7 @@ export default function Profile() {
   const fileInputRef = useRef(null);
   
   const [formData, setFormData] = useState({
+    full_name: '',
     username: '',
     avatar_url: '',
     instagram: '',
@@ -29,6 +30,7 @@ export default function Profile() {
   useEffect(() => {
     if (user) {
       setFormData({
+        full_name: user.full_name || '',
         username: user.username || '',
         avatar_url: user.avatar_url || '',
         instagram: user.instagram || '',
@@ -163,6 +165,17 @@ export default function Profile() {
           {/* A. BASIC INFO */}
           <section className="space-y-6">
             <h2 className="text-sm font-bold uppercase tracking-widest mb-4">Basic Info</h2>
+            <div>
+              <label className="block text-xs uppercase tracking-widest text-muted-foreground mb-2">Full Name</label>
+              <input
+                type="text"
+                name="full_name"
+                value={formData.full_name}
+                onChange={handleChange}
+                className="w-full bg-transparent border-b border-border py-2 text-sm focus:outline-none focus:border-foreground transition-colors mb-6"
+                placeholder="Your full name"
+              />
+            </div>
             <div>
               <label className="block text-xs uppercase tracking-widest text-muted-foreground mb-2">Username</label>
               <input

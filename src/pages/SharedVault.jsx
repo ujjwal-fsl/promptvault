@@ -94,11 +94,11 @@ export default function SharedVault() {
         
         <div className="mb-8 pl-1">
           <div className="flex items-baseline gap-2 mb-2">
-            <h1 className="font-mono font-bold text-3xl md:text-4xl text-black">
-              {vaultId}'S
+            <h1 className="font-mono font-bold text-3xl md:text-4xl tracking-tighter text-black">
+              {profile?.full_name || vaultId}'s
             </h1>
-            <span className="font-mono font-light text-xl md:text-2xl text-muted-foreground">
-              PROMPT DEX
+            <span className="font-mono font-light text-lg md:text-xl tracking-tighter text-muted-foreground">
+              Prompt Dex
             </span>
           </div>
           <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
@@ -120,7 +120,7 @@ export default function SharedVault() {
           ) : filteredPrompts.length === 0 ? (
             <EmptyState message={search ? "Adjust current filtering parameters." : "No records established in this vault."} />
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 w-full">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 w-full border-b border-border">
               {filteredPrompts.map((prompt, i) => (
                 <div 
                   key={prompt.id} 

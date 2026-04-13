@@ -89,9 +89,14 @@ export default function PublicVault() {
               </div>
             )}
             <div>
-              <h1 className="text-base font-bold uppercase tracking-widest text-foreground">
-                @{username}'S VAULT
-              </h1>
+              <div className="flex items-baseline gap-1.5">
+                <h1 className="text-xl md:text-2xl font-bold tracking-tighter text-foreground">
+                  {profile?.full_name || username}'s
+                </h1>
+                <span className="text-sm md:text-base font-light tracking-tighter text-muted-foreground">
+                  Prompt Dex
+                </span>
+              </div>
               {/* Creator Social Links */}
               <div className="flex items-center gap-3 mt-1 text-[10px] uppercase tracking-widest">
                 {profile?.twitter && <a href={`https://twitter.com/${profile.twitter.replace('@','')}`} target="_blank" rel="noreferrer" className="text-primary hover:text-foreground">TWITTER</a>}

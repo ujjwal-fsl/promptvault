@@ -90,6 +90,7 @@ const styles = `
 
 export default function CompleteProfile() {
   const [username, setUsername] = useState('');
+  const [fullName, setFullName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true); // default true to fetch first
   const [currentUser, setCurrentUser] = useState(null);
@@ -123,6 +124,8 @@ export default function CompleteProfile() {
           navigate('/');
         } else {
           setCurrentUser(user);
+          // Auto-fill from oauth metadata or defaults if available natively
+          setFullName(user.full_name || user.user_metadata?.full_name || user.user_metadata?.name || '');
           setLoading(false);
         }
       } catch (err) {
@@ -137,6 +140,7 @@ export default function CompleteProfile() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     const val = username.trim().toLowerCase();
+    const nameVal = fullName.trim();
     
     const regex = /^[a-z0-9_]{3,20}$/;
     if (!regex.test(val)) {
@@ -148,7 +152,10 @@ export default function CompleteProfile() {
     setError('');
     
     try {
-      await authService.updateUsername(currentUser.id, val);
+      await authService.updateProfile(currentUser.id, { 
+        username: val, 
+        full_name: nameVal 
+      });
       // Success. Redirect using window.location so AuthContext rechecks and doesn't redirect back here.
       window.location.href = '/admin'; // Redirecting to admin, typical entry logic after login
     } catch (err) {
@@ -175,9 +182,17 @@ export default function CompleteProfile() {
     <div className="pv-cp-root">
       <div className="pv-cp-container">
         <h1 className="pv-cp-display">Complete Profile</h1>
-        <p className="pv-cp-subtext">Choose a username to continue.</p>
+        <p className="pv-cp-subtext">Choose your identity to continue.</p>
         
         <form onSubmit={handleSubmit} noValidate>
+          <input
+            type="text"
+            placeholder="Full Name"
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            className="pv-cp-input"
+            disabled={loading}
+          />
           <input
             type="text"
             placeholder="Username"
@@ -188,7 +203,6 @@ export default function CompleteProfile() {
             }}
             className={`pv-cp-input ${error ? 'error' : ''}`}
             disabled={loading}
-            autoFocus
           />
           {error && <div className="pv-cp-error-msg">{error}</div>}
 
