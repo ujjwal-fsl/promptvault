@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '@/lib/AuthContext';
-import { promptService } from '@/services/promptService';
+import { promptService, getUserPrompts } from '@/services/promptService';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import AdminPromptRow from '@/components/admin/AdminPromptRow';
@@ -20,11 +20,19 @@ export default function Admin() {
   const [shareCopied, setShareCopied] = useState(false);
 
   const { data: prompts = [], isLoading } = useQuery({
-    queryKey: ['admin-prompts', user?.id],
+    queryKey: ['admin-prompts'],
     queryFn: async () => {
       if (!user) return [];
-      const data = await promptService.getPromptsByUser(user.id);
-      return data.map(p => ({ ...p, name: p.title, body: p.content }));
+      try {
+        const data = await getUserPrompts();
+        // Return raw data to maintain DB shape, Admin components map properly via fallback OR we can map here if absolutely needed.
+        // The instructions said "Replace existing fetch logic - Use getUserPrompts()".
+        // The UI currently handles name vs title (in AdminPromptForm: editingPrompt.name || editingPrompt.title).
+        return data; 
+      } catch (err) {
+        console.error("Fetch prompts error:", err);
+        return [];
+      }
     },
     enabled: !!user,
   });
@@ -32,7 +40,7 @@ export default function Admin() {
   const deleteMutation = useMutation({
     mutationFn: (id) => promptService.deletePrompt(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-prompts', user?.id] });
+      queryClient.invalidateQueries({ queryKey: ['admin-prompts'] });
     },
     onError: (error) => {
       console.error("Error deleting prompt", error);
@@ -48,9 +56,22 @@ export default function Admin() {
     deleteMutation.mutate(id);
   };
 
-  const handleSaved = () => {
+  const handleSaved = (newPrompt) => {
     setEditingPrompt(null);
-    queryClient.invalidateQueries({ queryKey: ['admin-prompts', user?.id] });
+    if (newPrompt && !editingPrompt) {
+      queryClient.setQueryData(['admin-prompts'], (old) => {
+        if (!old) return [newPrompt];
+        return [newPrompt, ...old];
+      });
+      // also optionally update landing fallback
+      queryClient.setQueryData(['landing-prompts'], (old) => {
+        if (!old) return [newPrompt];
+        return [newPrompt, ...old];
+      });
+    }
+    // Maintain existing refresh logic
+    queryClient.invalidateQueries({ queryKey: ['admin-prompts'] });
+    queryClient.invalidateQueries({ queryKey: ['landing-prompts'] });
   };
 
   const handleCopyLink = async () => {
@@ -160,9 +181,24 @@ export default function Admin() {
               <p className="font-mono text-xs uppercase tracking-widest">Loading vault</p>
             </div>
           ) : filteredPrompts.length === 0 ? (
-            <EmptyState 
-              message={search ? "No prompts match your search." : "Your vault is empty."}
-            />
+            search ? (
+              <EmptyState message="No prompts match your search." />
+            ) : (
+              <div className="flex flex-col items-center justify-center py-32 px-8 text-center max-w-md mx-auto">
+                <div className="w-16 h-16 border border-border flex items-center justify-center mb-8">
+                  <div className="w-2 h-2 bg-muted-foreground" />
+                </div>
+                <p className="font-mono text-sm tracking-wide uppercase text-muted-foreground mb-6">
+                  No prompts yet.
+                </p>
+                <button 
+                  onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+                  className="font-mono text-xs uppercase tracking-widest px-6 py-3 border border-border hover:bg-foreground hover:text-background transition-colors"
+                >
+                  LET'S START →
+                </button>
+              </div>
+            )
           ) : (
             <div className="flex flex-col">
               {filteredPrompts.map(prompt => (

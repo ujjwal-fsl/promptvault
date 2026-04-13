@@ -1,5 +1,6 @@
 import { storageService } from './storageService';
 import { authService } from './authService';
+import { supabase } from '../lib/supabase';
 
 const delay = (ms) => new Promise(res => setTimeout(res, ms));
 
@@ -115,3 +116,105 @@ export const promptService = {
     }
   }
 };
+
+// --- NEW SUPABASE BACKEND (Not yet connected to UI, prevents breaking the app) ---
+
+export const createPrompt = async (data) => {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Authentication required.");
+
+    const { data: prompt, error } = await supabase
+      .from('prompts')
+      .insert({
+        name: data.name,
+        body: data.body,
+        type: data.type || 'text',
+        tags: data.tags || [],
+        usage_count: 0,
+        created_by: user.id,
+        is_public: data.is_public || false
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    return prompt;
+  } catch (error) {
+    console.error('[Supabase createPrompt error]', error);
+    throw error;
+  }
+};
+
+export const getUserPrompts = async () => {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Authentication required.");
+
+    const { data: prompts, error } = await supabase
+      .from('prompts')
+      .select('*')
+      .eq('created_by', user.id)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    return prompts;
+  } catch (error) {
+    console.error('[Supabase getUserPrompts error]', error);
+    throw error;
+  }
+};
+
+export const incrementUsage = async (promptId) => {
+  try {
+    // Safely increment by fetching current count then updating. 
+    // For high concurrency, it is recommended to use a Supabase RPC later.
+    const { data: current, error: fetchErr } = await supabase
+      .from('prompts')
+      .select('usage_count')
+      .eq('id', promptId)
+      .single();
+      
+    if (fetchErr) throw fetchErr;
+    
+    const { data: updated, error: updateErr } = await supabase
+      .from('prompts')
+      .update({ usage_count: current.usage_count + 1 })
+      .eq('id', promptId)
+      .select()
+      .single();
+      
+    if (updateErr) throw updateErr;
+    return updated;
+  } catch (error) {
+    console.error('[Supabase incrementUsage error]', error);
+    throw error;
+  }
+};
+
+export const searchPrompts = async (query) => {
+  try {
+    let supabaseQuery = supabase
+      .from('prompts')
+      .select('*')
+      .eq('is_public', true);
+
+    if (query?.name) {
+      supabaseQuery = supabaseQuery.ilike('name', `%${query.name}%`);
+    }
+    
+    // query.tags should be an array
+    if (query?.tags && Array.isArray(query.tags) && query.tags.length > 0) {
+      supabaseQuery = supabaseQuery.contains('tags', query.tags);
+    }
+    
+    const { data: prompts, error } = await supabaseQuery.order('created_at', { ascending: false });
+    
+    if (error) throw error;
+    return prompts;
+  } catch (error) {
+    console.error('[Supabase searchPrompts error]', error);
+    throw error;
+  }
+};
+

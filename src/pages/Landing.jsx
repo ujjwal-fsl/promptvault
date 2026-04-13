@@ -1,22 +1,27 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { promptService } from '@/services/promptService';
+import { promptService, getUserPrompts } from '@/services/promptService';
 import { authService } from '@/services/authService';
 import PromptCard from '@/components/PromptCard';
 import CornerNav from '@/components/CornerNav';
 import EmptyState from '@/components/EmptyState';
 import { Search, RefreshCw } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 export default function Landing() {
   const [search, setSearch] = useState('');
+  const navigate = useNavigate();
   
   const { data: prompts = [], isLoading } = useQuery({
     queryKey: ['landing-prompts'],
     queryFn: async () => {
-      const user = authService.getCurrentUser();
-      if (!user) return [];
-      const data = await promptService.getPromptsByUser(user.id);
-      return data.map(p => ({ ...p, name: p.title, body: p.content }));
+      try {
+        const data = await getUserPrompts();
+        return data;
+      } catch (err) {
+        console.error("Fetch landing prompts error:", err);
+        return [];
+      }
     }
   });
 
@@ -75,7 +80,24 @@ export default function Landing() {
             <span className="font-mono text-xs uppercase tracking-widest">Accessing records</span>
           </div>
         ) : filteredPrompts.length === 0 ? (
-          <EmptyState message={search ? "No matches found." : "No public combinations available."} />
+          search ? (
+            <EmptyState message="No matches found." />
+          ) : (
+            <div className="flex flex-col items-center justify-center py-32 px-8 text-center max-w-md mx-auto">
+              <div className="w-16 h-16 border border-border flex items-center justify-center mb-8">
+                <div className="w-2 h-2 bg-muted-foreground" />
+              </div>
+              <p className="font-mono text-sm tracking-wide uppercase text-muted-foreground mb-6">
+                No prompts yet.
+              </p>
+              <button 
+                onClick={() => navigate('/admin')}
+                className="font-mono text-xs uppercase tracking-widest px-6 py-3 border border-border hover:bg-foreground hover:text-background transition-colors"
+              >
+                LET'S START →
+              </button>
+            </div>
+          )
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 w-full border-b border-border">
             {filteredPrompts.map((prompt) => (

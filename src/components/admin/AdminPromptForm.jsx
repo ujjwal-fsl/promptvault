@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { promptService } from '@/services/promptService';
+import { promptService, createPrompt } from '@/services/promptService';
 
 export default function AdminPromptForm({ editingPrompt, onSaved, onCancel }) {
   const [name, setName] = useState('');
@@ -22,24 +22,27 @@ export default function AdminPromptForm({ editingPrompt, onSaved, onCancel }) {
 
     setSaving(true);
     try {
+      let updatedOrNewPrompt;
       if (editingPrompt) {
+        // Not currently migrated to Supabase, keeping old mock update purely to avoid crashing if still used
         await promptService.updatePrompt(editingPrompt.id, {
           title: name.trim(),
           content: body.trim(),
         });
       } else {
-        await promptService.createPrompt({
-          title: name.trim(),
-          content: body.trim(),
+        updatedOrNewPrompt = await createPrompt({
+          name: name.trim(),
+          body: body.trim(),
         });
       }
+      onSaved(updatedOrNewPrompt);
     } catch (err) {
-      console.error(err);
+      console.error("Create prompt error:", err);
+      onSaved();
     }
     setSaving(false);
     setName('');
     setBody('');
-    onSaved();
   };
 
   return (

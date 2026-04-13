@@ -25,6 +25,11 @@ export const AuthProvider = ({ children }) => {
     if (currentUser) {
       setUser(currentUser);
       setIsAuthenticated(true);
+      
+      // Global Check for missing username
+      if (!currentUser.username && window.location.pathname !== '/complete-profile') {
+        window.location.href = '/complete-profile';
+      }
     } else {
       setUser(null);
       setIsAuthenticated(false);

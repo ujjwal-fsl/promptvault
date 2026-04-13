@@ -97,5 +97,34 @@ export const authService = {
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
     return true;
+  },
+
+  updateUsername: async (userId, username) => {
+    try {
+      const { data: existing, error: checkError } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('username', username)
+        .maybeSingle();
+
+      if (checkError) throw checkError;
+        
+      if (existing && existing.id !== userId) {
+        throw new Error('Username already taken');
+      }
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .update({ username })
+        .eq('id', userId)
+        .select()
+        .single();
+        
+      if (error) throw error;
+      return data;
+    } catch (e) {
+      console.error('updateUsername error:', e);
+      throw e;
+    }
   }
 };

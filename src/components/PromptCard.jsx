@@ -1,10 +1,14 @@
 import { useState, useRef } from 'react';
 import { motion } from 'framer-motion';
+import { authService } from '@/services/authService';
+import { incrementUsage } from '@/services/promptService';
+import { useQueryClient } from '@tanstack/react-query';
 
 export default function PromptCard({ prompt }) {
   const [copied, setCopied] = useState(false);
   const [hovered, setHovered] = useState(false);
   const timeoutRef = useRef(null);
+  const queryClient = useQueryClient();
 
   const handleCopy = async () => {
     try {
@@ -22,6 +26,26 @@ export default function PromptCard({ prompt }) {
       setCopied(true);
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       timeoutRef.current = setTimeout(() => setCopied(false), 1500);
+    }
+
+    // Usage tracking
+    try {
+      const user = await authService.getCurrentUser();
+      if (user && prompt.created_by === user.id) {
+        
+        // Optimistic UI update instantly WITHOUT refetch
+        const updateCache = (old) => {
+          if (!old) return old;
+          return old.map(p => p.id === prompt.id ? { ...p, usage_count: (p.usage_count || 0) + 1 } : p);
+        };
+        
+        queryClient.setQueryData(['landing-prompts'], updateCache);
+        queryClient.setQueryData(['admin-prompts'], updateCache);
+
+        await incrementUsage(prompt.id);
+      }
+    } catch (err) {
+      console.error("Increment usage err:", err);
     }
   };
 

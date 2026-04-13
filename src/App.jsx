@@ -9,6 +9,7 @@ import Landing from './pages/Landing';
 import Admin from './pages/Admin';
 import SharedVault from './pages/SharedVault';
 import Auth from './pages/Auth';
+import CompleteProfile from './pages/CompleteProfile';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -40,6 +41,7 @@ const AuthenticatedApp = () => {
       <Route path="/auth" element={<Auth />} />
       <Route path="/admin" element={<Admin />} />
       <Route path="/vault/:vaultId" element={<SharedVault />} />
+      <Route path="/complete-profile" element={<CompleteProfile />} />
       <Route path="*" element={<PageNotFound />} />
     </Routes>
   );
