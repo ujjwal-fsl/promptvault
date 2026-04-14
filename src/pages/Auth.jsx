@@ -347,18 +347,14 @@ export default function Auth() {
   const navigate = useNavigate();
   const { isAuthenticated, isLoadingAuth } = useAuth();
 
-  // Detect Supabase email change confirmation flow
-  const params = new URLSearchParams(window.location.search);
-  const isEmailChange = params.get('type') === 'email_change';
-
-  // Redirect authenticated users away from auth page (unless email change flow)
+  // Redirect authenticated users away from auth page
   useEffect(() => {
-    if (!isLoadingAuth && isAuthenticated && !isEmailChange) {
+    if (!isLoadingAuth && isAuthenticated) {
       navigate('/', { replace: true });
     }
-  }, [isLoadingAuth, isAuthenticated, navigate, isEmailChange]);
+  }, [isLoadingAuth, isAuthenticated, navigate]);
 
-  if (!isLoadingAuth && isAuthenticated && !isEmailChange) return null;
+  if (!isLoadingAuth && isAuthenticated) return null;
 
   // Inject styles once
   useEffect(() => {

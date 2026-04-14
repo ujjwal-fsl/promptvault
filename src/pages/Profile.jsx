@@ -24,11 +24,6 @@ export default function Profile() {
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const fileInputRef = useRef(null);
 
-  // Email change flow
-  const [editingEmail, setEditingEmail] = useState(false);
-  const [newEmail, setNewEmail] = useState('');
-  const [emailSaving, setEmailSaving] = useState(false);
-  const [emailMessage, setEmailMessage] = useState(null); // { type: 'success' | 'error', text: string }
   
   const [formData, setFormData] = useState({
     full_name: '',
@@ -158,32 +153,6 @@ export default function Profile() {
     }
   };
 
-  const handleChangeEmail = async () => {
-    const trimmed = newEmail.trim();
-    if (!trimmed || !/\S+@\S+\.\S+/.test(trimmed)) {
-      setEmailMessage({ type: 'error', text: 'Please enter a valid email address.' });
-      return;
-    }
-    setEmailSaving(true);
-    setEmailMessage(null);
-    try {
-      await authService.updateEmail(trimmed);
-      setEmailMessage({ type: 'success', text: '' });
-      setNewEmail('');
-      setEditingEmail(false);
-    } catch (err) {
-      console.error('Email update error:', err);
-      setEmailMessage({ type: 'error', text: err.message || 'Failed to update email.' });
-    } finally {
-      setEmailSaving(false);
-    }
-  };
-
-  const handleCancelEmailEdit = () => {
-    setEditingEmail(false);
-    setNewEmail('');
-    setEmailMessage(null);
-  };
 
   const handleLogout = async () => {
     await authService.logout();
@@ -239,64 +208,6 @@ export default function Profile() {
                 disabled
                 className="w-full bg-transparent border-b border-border py-2 text-sm text-muted-foreground cursor-not-allowed"
               />
-              
-              {!editingEmail ? (
-                <button
-                  type="button"
-                  onClick={() => { setEditingEmail(true); setEmailMessage(null); }}
-                  className="mt-3 text-[10px] uppercase tracking-widest text-primary hover:text-foreground transition-colors"
-                >
-                  Change Email
-                </button>
-              ) : (
-                <div className="mt-3 space-y-3">
-                  <input
-                    type="email"
-                    value={newEmail}
-                    onChange={(e) => setNewEmail(e.target.value)}
-                    placeholder="New email address"
-                    className="w-full bg-transparent border-b border-border py-2 text-sm focus:outline-none focus:border-foreground transition-colors"
-                    autoFocus
-                  />
-                  <div className="flex items-center gap-4">
-                    <button
-                      type="button"
-                      onClick={handleChangeEmail}
-                      disabled={emailSaving}
-                      className="text-[10px] uppercase tracking-widest text-primary hover:text-foreground transition-colors disabled:opacity-50"
-                    >
-                      {emailSaving ? 'Sending...' : 'Save New Email'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleCancelEmailEdit}
-                      className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                  <p className="text-[10px] text-muted-foreground/60 uppercase tracking-widest mt-2">
-                    Note: You must confirm from both emails for the change to complete.
-                  </p>
-                </div>
-              )}
-
-              {emailMessage && (
-                emailMessage.type === 'error' ? (
-                  <p className="mt-2 text-[10px] uppercase tracking-widest text-red-500">
-                    {emailMessage.text}
-                  </p>
-                ) : (
-                  <div className="mt-2">
-                    <p className="text-[10px] uppercase tracking-widest text-green-600">
-                      Email change requires confirmation from both your old and new email.
-                    </p>
-                    <p className="text-[10px] uppercase tracking-widest text-blue-500 font-medium mt-1">
-                      Please check both inboxes.
-                    </p>
-                  </div>
-                )
-              )}
             </div>
           </section>
 

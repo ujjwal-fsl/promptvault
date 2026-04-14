@@ -174,13 +174,5 @@ export const authService = {
       console.error('getProfileByUsername error:', e);
       return null;
     }
-  },
-
-  updateEmail: async (newEmail) => {
-    const { data, error } = await supabase.auth.updateUser({
-      email: newEmail
-    });
-    if (error) throw error;
-    return data;
   }
 };
