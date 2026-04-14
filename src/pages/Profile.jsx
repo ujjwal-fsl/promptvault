@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '@/lib/AuthContext';
 import { authService } from '@/services/authService';
 import { supabase } from '@/lib/supabase';
@@ -22,7 +22,13 @@ export default function Profile() {
 
   const [saving, setSaving] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [saveMessage, setSaveMessage] = useState(null); // { type: 'success' | 'error', text: string }
   const fileInputRef = useRef(null);
+
+  // Username validation
+  const [usernameStatus, setUsernameStatus] = useState('idle'); // idle | checking | available | taken | invalid
+  const [usernameMessage, setUsernameMessage] = useState('');
+  const debounceRef = useRef(null);
 
   
   const [formData, setFormData] = useState({
@@ -57,6 +63,50 @@ export default function Profile() {
       ...prev,
       [name]: type === 'checkbox' ? checked : value
     }));
+    if (name === 'username') {
+      setSaveMessage(null);
+      const val = value.trim().toLowerCase();
+      const regex = /^[a-z0-9_]{3,20}$/;
+      if (!val) {
+        setUsernameStatus('idle');
+        setUsernameMessage('');
+        return;
+      }
+      if (!regex.test(val)) {
+        setUsernameStatus('invalid');
+        setUsernameMessage('3–20 chars, lowercase letters, numbers, underscores only');
+        return;
+      }
+      // Same as current username — no need to check
+      if (val === user?.username) {
+        setUsernameStatus('idle');
+        setUsernameMessage('');
+        return;
+      }
+      setUsernameStatus('checking');
+      setUsernameMessage('Checking...');
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(async () => {
+        try {
+          const { data: existing } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('username', val)
+            .neq('id', user.id)
+            .maybeSingle();
+          if (existing) {
+            setUsernameStatus('taken');
+            setUsernameMessage('Username already taken');
+          } else {
+            setUsernameStatus('available');
+            setUsernameMessage('Username available');
+          }
+        } catch {
+          setUsernameStatus('idle');
+          setUsernameMessage('');
+        }
+      }, 500);
+    }
   };
 
   const handleImageUpload = (e) => {
@@ -125,29 +175,34 @@ export default function Profile() {
     reader.readAsDataURL(file);
   };
 
+  const isUsernameSaveBlocked = usernameStatus === 'taken' || usernameStatus === 'invalid' || usernameStatus === 'checking';
+
   const handleSave = async (e) => {
     e.preventDefault();
-    if (saving) return; // Prevent multiple clicks
+    if (saving || isUsernameSaveBlocked) return;
 
     const val = formData.username.trim().toLowerCase();
     const regex = /^[a-z0-9_]{3,20}$/;
     
     if (!val || !regex.test(val)) {
-      alert('Username must be 3-20 characters long, containing only letters, numbers, and underscores.');
+      setUsernameStatus('invalid');
+      setUsernameMessage('3–20 chars, lowercase letters, numbers, underscores only');
       return;
     }
 
     setSaving(true);
+    setSaveMessage(null);
     try {
       const payload = { ...formData, username: val };
       await authService.updateProfile(user.id, payload);
-      // Invalidate user cache to refresh Data
       queryClient.invalidateQueries(['user']);
-      setFormData(prev => ({ ...prev, username: val })); // Sync lowercased
-      alert('Profile updated successfully.');
+      setFormData(prev => ({ ...prev, username: val }));
+      setUsernameStatus('idle');
+      setUsernameMessage('');
+      setSaveMessage({ type: 'success', text: 'Profile updated successfully.' });
     } catch (err) {
       console.error(err);
-      alert(err.message || 'Error updating profile');
+      setSaveMessage({ type: 'error', text: err.message || 'Error updating profile.' });
     } finally {
       setSaving(false);
     }
@@ -197,6 +252,15 @@ export default function Profile() {
                 placeholder="Choose a global identifier"
                 required
               />
+              {usernameMessage && (
+                <p className={`mt-1 text-[10px] uppercase tracking-widest ${
+                  usernameStatus === 'available' ? 'text-green-500' :
+                  usernameStatus === 'checking' ? 'text-muted-foreground' :
+                  'text-red-500'
+                }`}>
+                  {usernameMessage}
+                </p>
+              )}
             </div>
 
             {/* Email */}
@@ -327,21 +391,30 @@ export default function Profile() {
             </section>
           )}
 
-          <div className="pt-8 flex items-center justify-between border-t border-border mt-12">
-            <button 
-              type="button" 
-              onClick={handleLogout}
-              className="text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Log Out
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="px-8 py-3 border border-border text-xs font-bold uppercase tracking-widest hover:bg-foreground hover:text-background transition-colors disabled:opacity-50"
-            >
-              {saving ? 'SAVING...' : 'SAVE CHANGES'}
-            </button>
+          <div className="pt-8 flex flex-col gap-4 border-t border-border mt-12">
+            <div className="flex items-center justify-between">
+              <button 
+                type="button" 
+                onClick={handleLogout}
+                className="text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Log Out
+              </button>
+              <button
+                type="submit"
+                disabled={saving || isUsernameSaveBlocked}
+                className="px-8 py-3 border border-border text-xs font-bold uppercase tracking-widest hover:bg-foreground hover:text-background transition-colors disabled:opacity-50"
+              >
+                {saving ? 'SAVING...' : 'SAVE CHANGES'}
+              </button>
+            </div>
+            {saveMessage && (
+              <p className={`text-[10px] uppercase tracking-widest ${
+                saveMessage.type === 'success' ? 'text-green-500' : 'text-red-500'
+              }`}>
+                {saveMessage.text}
+              </p>
+            )}
           </div>
         </form>
       </main>
