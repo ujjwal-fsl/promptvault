@@ -362,7 +362,9 @@ export default function Auth() {
     }
   }, [isLoadingAuth, isAuthenticated, navigate]);
 
-  if (!isLoadingAuth && isAuthenticated) return null;
+  if (!isLoadingAuth && isAuthenticated) {
+    return <div className="min-h-screen bg-background" />;
+  }
 
   // Inject styles once
   useEffect(() => {

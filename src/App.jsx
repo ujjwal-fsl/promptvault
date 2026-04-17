@@ -12,6 +12,7 @@ import Auth from './pages/Auth';
 import CompleteProfile from './pages/CompleteProfile';
 import Profile from './pages/Profile';
 import PublicVault from './pages/PublicVault';
+import Verified from './pages/Verified';
 
 import React from 'react';
 
@@ -84,6 +85,7 @@ const AuthenticatedApp = () => {
       <Route path="/vault/:vaultId" element={<SharedVault />} />
       <Route path="/public/:username" element={<PublicVault />} />
       <Route path="/complete-profile" element={<CompleteProfile />} />
+      <Route path="/verified" element={<Verified />} />
       <Route path="*" element={<PageNotFound />} />
     </Routes>
   );
@@ -95,14 +97,14 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <AuthProvider>
-        <QueryClientProvider client={queryClientInstance}>
-          <Router>
+      <QueryClientProvider client={queryClientInstance}>
+        <Router>
+          <AuthProvider>
             <AuthenticatedApp />
-          </Router>
-          <Toaster />
-        </QueryClientProvider>
-      </AuthProvider>
+            <Toaster />
+          </AuthProvider>
+        </Router>
+      </QueryClientProvider>
     </ErrorBoundary>
   )
 }

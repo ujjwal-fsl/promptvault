@@ -5,6 +5,9 @@ export const authService = {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
+      options: {
+        emailRedirectTo: `${window.location.origin}/verified`
+      }
     });
     if (error) throw error;
     if (data.user) {
@@ -33,10 +36,18 @@ export const authService = {
     return data;
   },
 
-  ensureProfile: async (user, username = null, fullName = null) => {
+  ensureProfile: async (user, username = null, fullNameOverride = null) => {
     if (!user) return null;
     try {
-      const parsedName = fullName || user.user_metadata?.full_name || user.user_metadata?.name || null;
+      const fullName = 
+        fullNameOverride || 
+        user.user_metadata?.full_name || 
+        user.email?.split('@')[0] || 
+        'User';
+
+      const avatar = 
+        user.user_metadata?.avatar_url || 
+        `https://ui-avatars.com/api/?name=${encodeURIComponent(fullName)}`;
       
       const { data: profile, error } = await supabase
         .from('profiles')
@@ -50,13 +61,15 @@ export const authService = {
       }
       
       if (!profile) {
+         // Not exists -> insert
          const { data: newProfile, error: insertError } = await supabase
            .from('profiles')
            .insert([{
              id: user.id,
              email: user.email,
              username: username,
-             full_name: parsedName,
+             full_name: fullName,
+             avatar_url: avatar,
              plan: 'FREE',
              created_at: new Date().toISOString()
            }])
@@ -67,9 +80,15 @@ export const authService = {
              console.error('Error creating profile:', insertError);
              return null;
          }
-         return { ...user, ...newProfile };
+         return newProfile;
+      } else {
+         // Exists -> Do NOT overwrite username. Only update missing avatar.
+         if (!profile.avatar_url && avatar) {
+            await supabase.from('profiles').update({ avatar_url: avatar }).eq('id', user.id);
+            profile.avatar_url = avatar;
+         }
+         return profile;
       }
-      return { ...user, ...profile };
     } catch (e) {
       console.error('ensureProfile error:', e);
       return null;
