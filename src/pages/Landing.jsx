@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { promptService, getUserPrompts } from '@/services/promptService';
 import { authService } from '@/services/authService';
 import { useAuth } from '@/lib/AuthContext';
+import { usePlan } from '@/hooks/usePlan';
 import PromptCard from '@/components/PromptCard';
 import CornerNav from '@/components/CornerNav';
 import EmptyState from '@/components/EmptyState';
@@ -24,8 +25,8 @@ export default function Landing() {
   }, [isLoadingAuth, isAuthenticated, navigate]);
 
   if (isLoadingAuth || !isAuthenticated) return null;
-  
-  const isCreator = user?.plan === 'CREATOR' || user?.plan === 'CREATOR_PLUS';
+
+  const { canUsePublicView } = usePlan();
   
   const handleTogglePublicView = () => {
     const newVal = !publicView;
@@ -93,7 +94,7 @@ export default function Landing() {
         <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
           {filteredPrompts.length} PROMPTS
         </span>
-        {isCreator && (
+        {canUsePublicView && (
           <button
             onClick={handleTogglePublicView}
             className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"

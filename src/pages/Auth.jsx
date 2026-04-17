@@ -350,7 +350,15 @@ export default function Auth() {
   // Redirect authenticated users away from auth page
   useEffect(() => {
     if (!isLoadingAuth && isAuthenticated) {
-      navigate('/', { replace: true });
+      const redirectPath = localStorage.getItem('redirectAfterAuth');
+      if (redirectPath) {
+        localStorage.removeItem('redirectAfterAuth');
+        setTimeout(() => {
+          navigate(redirectPath, { replace: true });
+        }, 100);
+      } else {
+        navigate('/', { replace: true });
+      }
     }
   }, [isLoadingAuth, isAuthenticated, navigate]);
 
@@ -398,10 +406,26 @@ export default function Auth() {
     try {
       if (mode === 'signup') {
         const res = await authService.signup(fields.email, fields.password, fields.username.trim(), fields.fullName.trim());
-        if (res?.user) navigate('/');
+        if (res?.user) {
+          const redirectPath = localStorage.getItem('redirectAfterAuth');
+          if (redirectPath) {
+            localStorage.removeItem('redirectAfterAuth');
+            setTimeout(() => navigate(redirectPath, { replace: true }), 100);
+          } else {
+            navigate('/');
+          }
+        }
       } else {
         const res = await authService.login(fields.email, fields.password);
-        if (res?.user) navigate('/');
+        if (res?.user) {
+          const redirectPath = localStorage.getItem('redirectAfterAuth');
+          if (redirectPath) {
+            localStorage.removeItem('redirectAfterAuth');
+            setTimeout(() => navigate(redirectPath, { replace: true }), 100);
+          } else {
+            navigate('/');
+          }
+        }
       }
     } catch (err) {
       console.error(err);

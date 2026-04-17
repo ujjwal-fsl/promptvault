@@ -95,24 +95,22 @@ export const promptService = {
   },
 
   deletePrompt: async (id) => {
-    await delay(300);
     try {
-      const user = authService.getCurrentUser();
+      const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Authentication required.");
 
-      const db = storageService.getDb();
-      const index = db.prompts.findIndex(p => p.id === id);
-      
-      if (index === -1) throw new Error("Prompt not found.");
-      if (db.prompts[index].user_id !== user.id) throw new Error("Permission denied.");
+      const { error } = await supabase
+        .from('prompts')
+        .delete()
+        .eq('id', id)
+        .eq('created_by', user.id); // 🔴 IMPORTANT
 
-      db.prompts[index].isDeleted = true;
-      storageService.setDb(db);
-      
-      return true;
-    } catch (e) {
-      console.error('[promptService Error deletePrompt]', e);
-      throw e;
+      if (error) throw error;
+
+      return { success: true };
+    } catch (error) {
+      console.error('[deletePrompt error]', error);
+      throw error;
     }
   }
 };
@@ -129,7 +127,6 @@ export const createPrompt = async (data) => {
       .insert({
         name: data.name,
         body: data.body,
-        type: data.type || 'text',
         tags: data.tags || [],
         usage_count: 0,
         created_by: user.id,
@@ -231,6 +228,78 @@ export const getPublicPromptsByUserId = async (userId) => {
     return prompts;
   } catch (error) {
     console.error('[Supabase getPublicPromptsByUserId error]', error);
+    throw error;
+  }
+};
+
+export const addPromptToVault = async (prompt) => {
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+  if (authError || !user) throw new Error("Not authenticated");
+
+  if (!prompt?.name || !prompt?.body) {
+    throw new Error("Invalid prompt data");
+  }
+
+  // Prevent duplicates (check via source_prompt_id first, then fallback to name+body)
+  let existing = null;
+  if (prompt.id) {
+    const { data } = await supabase
+      .from('prompts')
+      .select('id')
+      .eq('created_by', user.id)
+      .eq('source_prompt_id', prompt.id)
+      .limit(1);
+    existing = data;
+  } else {
+    const { data } = await supabase
+      .from('prompts')
+      .select('id')
+      .eq('created_by', user.id)
+      .eq('name', prompt.name)
+      .eq('body', prompt.body)
+      .limit(1);
+    existing = data;
+  }
+
+  if (existing && existing.length > 0) {
+    return { alreadyExists: true };
+  }
+
+  const { data, error } = await supabase.from('prompts').insert({
+    name: prompt.name,
+    body: prompt.body,
+    tags: prompt.tags || [],
+    created_by: user.id,
+    is_public: false,
+
+    // Future-ready fields
+    source_prompt_id: prompt.id || null,
+    attribution_username: prompt.attribution_username || null,
+    usage_count: 0,
+  });
+
+  if (error) throw error;
+
+  return { success: true };
+};
+
+export const deletePrompt = async (id) => {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Authentication required.");
+
+    const { error } = await supabase
+      .from('prompts')
+      .delete()
+      .eq('id', id)
+      .eq('created_by', user.id); // 🔴 IMPORTANT
+
+    if (error) throw error;
+
+    return { success: true };
+  } catch (error) {
+    console.error('[deletePrompt error]', error);
     throw error;
   }
 };

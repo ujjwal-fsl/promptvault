@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/AuthContext';
-import { promptService, getUserPrompts } from '@/services/promptService';
+import { usePlan } from '@/hooks/usePlan';
+import { getUserPrompts, deletePrompt } from '@/services/promptService';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import AdminPromptRow from '@/components/admin/AdminPromptRow';
@@ -23,11 +24,15 @@ export default function Admin() {
 
   if (isLoadingAuth || !isAuthenticated) return null;
 
+  const { canShareVault, canSharePublicVault, planInfo } = usePlan();
+
   const [search, setSearch] = useState('');
   const [editingPrompt, setEditingPrompt] = useState(null);
   const [flashId, setFlashId] = useState(null);
   const [vaultCopied, setVaultCopied] = useState(false);
   const [publicCopied, setPublicCopied] = useState(false);
+  const [deletedPrompt, setDeletedPrompt] = useState(null);
+  const [undoTimeout, setUndoTimeout] = useState(null);
 
   const { data: prompts = [], isLoading } = useQuery({
     queryKey: ['admin-prompts'],
@@ -47,23 +52,47 @@ export default function Admin() {
     enabled: !!user,
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: (id) => promptService.deletePrompt(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-prompts'] });
-    },
-    onError: (error) => {
-      console.error("Error deleting prompt", error);
-    }
-  });
-
   const handleEdit = (prompt) => {
     setEditingPrompt(prompt);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleDelete = (id) => {
-    deleteMutation.mutate(id);
+  const handleDelete = async (prompt) => {
+    // store deleted prompt
+    setDeletedPrompt(prompt);
+
+    // remove from UI immediately Optimistic UX
+    queryClient.setQueryData(['admin-prompts'], (old) => {
+      if (!old) return old;
+      return old.filter(p => p.id !== prompt.id);
+    });
+
+    const timeout = setTimeout(async () => {
+      try {
+        await deletePrompt(prompt.id);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setDeletedPrompt(null);
+      }
+    }, 5000);
+
+    setUndoTimeout(timeout);
+  };
+
+  const handleUndo = () => {
+    if (undoTimeout) {
+      clearTimeout(undoTimeout);
+    }
+    
+    if (deletedPrompt) {
+      queryClient.setQueryData(['admin-prompts'], (old) => {
+        if (!old) return [deletedPrompt];
+        return [deletedPrompt, ...old].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      });
+    }
+
+    setDeletedPrompt(null);
   };
 
   const handleSaved = (newPrompt) => {
@@ -87,7 +116,7 @@ export default function Admin() {
   const handleShareVault = async () => {
     try {
       if (!user?.username) {
-        alert("Please set a username first.");
+        navigate('/profile');
         return;
       }
       const url = `${window.location.origin}/vault/${user.username}`;
@@ -103,7 +132,7 @@ export default function Admin() {
   const handleSharePublicVault = async () => {
     try {
       if (!user?.username) {
-        alert("Please set a username first.");
+        navigate('/profile');
         return;
       }
       const url = `${window.location.origin}/public/${user.username}`;
@@ -116,7 +145,6 @@ export default function Admin() {
     }
   };
 
-  const isPremium = ['PLUS', 'CREATOR', 'CREATOR_PLUS'].includes(user?.plan);
 
   // Filter out any internally marked Soft Deleted prompts just in case service layer lets it through
   const activePrompts = prompts.filter(p => !p.isDeleted);
@@ -145,31 +173,43 @@ export default function Admin() {
             <p className="font-mono text-xs text-muted-foreground mt-2 uppercase tracking-widest">
               {activePrompts.length} prompts in vault
             </p>
+            <span className="inline-block mt-1 font-mono text-[10px] uppercase tracking-widest text-muted-foreground/60">
+              {planInfo.label} Plan
+            </span>
           </div>
 
-          <div className="flex items-center gap-4 pt-1">
-            <button
-              onClick={handleShareVault}
-              className={`font-mono text-xs uppercase tracking-widest border px-4 py-2 transition-all duration-200 ${
-                vaultCopied
-                  ? 'bg-green-600 text-white border-green-600'
-                  : 'text-primary border-primary hover:bg-primary hover:text-primary-foreground'
-              }`}
-            >
-              {vaultCopied ? 'LINK COPIED!' : 'SHARE VAULT'}
-            </button>
+          <div className="flex flex-col items-end gap-2 pt-1">
+            <div className="flex items-center gap-4">
+              {canShareVault && (
+                <button
+                  onClick={handleShareVault}
+                  className={`font-mono text-xs uppercase tracking-widest border px-4 py-2 transition-all duration-200 ${
+                    vaultCopied
+                      ? 'bg-green-600 text-white border-green-600'
+                      : 'text-primary border-primary hover:bg-primary hover:text-primary-foreground'
+                  }`}
+                >
+                  {vaultCopied ? 'LINK COPIED!' : 'SHARE VAULT'}
+                </button>
+              )}
 
-            {isPremium && (
-              <button
-                onClick={handleSharePublicVault}
-                className={`font-mono text-xs uppercase tracking-widest border px-4 py-2 transition-all duration-200 ${
-                  publicCopied
-                    ? 'bg-blue-600 text-white border-blue-600'
-                    : 'text-primary border-primary hover:bg-primary hover:text-primary-foreground'
-                }`}
-              >
-                {publicCopied ? 'LINK COPIED!' : 'SHARE PUBLIC VAULT'}
-              </button>
+              {canSharePublicVault && (
+                <button
+                  onClick={handleSharePublicVault}
+                  className={`font-mono text-xs uppercase tracking-widest border px-4 py-2 transition-all duration-200 ${
+                    publicCopied
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'text-primary border-primary hover:bg-primary hover:text-primary-foreground'
+                  }`}
+                >
+                  {publicCopied ? 'LINK COPIED!' : 'SHARE PUBLIC VAULT'}
+                </button>
+              )}
+            </div>
+            {!canSharePublicVault && (
+              <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                Upgrade to Creator to unlock public sharing
+              </p>
             )}
 
             <Link
@@ -247,6 +287,18 @@ export default function Admin() {
           )}
         </div>
       </main>
+
+      {deletedPrompt && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-black text-white px-4 py-2 rounded-md flex items-center gap-4 shadow-lg z-50 animate-fade-in">
+          <span className="font-mono text-xs">Prompt deleted</span>
+          <button
+            onClick={handleUndo}
+            className="font-mono text-xs text-blue-400 hover:underline"
+          >
+            Undo
+          </button>
+        </div>
+      )}
     </div>
   );
 }

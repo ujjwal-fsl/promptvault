@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '@/lib/AuthContext';
+import { usePlan } from '@/hooks/usePlan';
 import { authService } from '@/services/authService';
 import { supabase } from '@/lib/supabase';
 import { useNavigate } from 'react-router-dom';
@@ -214,7 +215,7 @@ export default function Profile() {
     navigate('/');
   };
 
-  const isCreator = user?.plan === 'CREATOR' || user?.plan === 'CREATOR_PLUS';
+  const { canUseSocialLinks, canUsePublicProfile, planInfo } = usePlan();
 
   return (
     <div className="min-h-screen bg-background text-foreground font-mono selection:bg-primary selection:text-primary-foreground flex flex-col">
@@ -314,7 +315,7 @@ export default function Profile() {
             <h2 className="text-sm font-bold uppercase tracking-widest border-b border-border pb-2">Subscription Plan</h2>
             <div className="bg-secondary/20 p-6 border border-border flex items-center justify-between">
               <div>
-                <p className="text-sm font-bold uppercase tracking-widest">{user?.plan || 'FREE'}</p>
+                <p className="text-sm font-bold uppercase tracking-widest">{planInfo.label}</p>
                 <p className="text-xs text-muted-foreground uppercase tracking-widest mt-1">Current Active Plan</p>
               </div>
               <button type="button" disabled className="px-4 py-2 border border-border text-xs uppercase tracking-widest text-muted-foreground opacity-50 cursor-not-allowed">
@@ -324,7 +325,7 @@ export default function Profile() {
           </section>
 
           {/* CREATOR-ONLY SECTION */}
-          {isCreator && (
+          {canUseSocialLinks && (
             <section className="space-y-6 pt-6">
               <h2 className="text-sm font-bold uppercase tracking-widest border-b border-border pb-2 text-primary">Creator Profile</h2>
               

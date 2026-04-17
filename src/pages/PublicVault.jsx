@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { authService } from '@/services/authService';
-import { getPublicPromptsByUserId } from '@/services/promptService';
+import { useAuth } from '@/lib/AuthContext';
+import { getPublicPromptsByUserId, addPromptToVault } from '@/services/promptService';
 import { Search, RefreshCw, Layers } from 'lucide-react';
 import PromptCard from '@/components/PromptCard';
 import EmptyState from '@/components/EmptyState';
@@ -11,7 +11,40 @@ import EmptyState from '@/components/EmptyState';
 export default function PublicVault() {
   const { username } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const { isAuthenticated } = useAuth();
   const [search, setSearch] = useState('');
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedPrompts, setSelectedPrompts] = useState([]);
+
+  const handleBulkAdd = async () => {
+    if (!isAuthenticated) {
+      localStorage.setItem(
+        'redirectAfterAuth',
+        location.pathname + location.search
+      );
+      navigate('/auth');
+      return;
+    }
+
+    try {
+      // Use activePrompts or prompts to filter
+      const selected = prompts.filter(p => selectedPrompts.includes(p.id));
+
+      for (const prompt of selected) {
+        await addPromptToVault({
+          ...prompt,
+          attribution_username: username,
+        });
+      }
+
+      setSelectionMode(false);
+      setSelectedPrompts([]);
+
+    } catch (err) {
+      console.error("Bulk add error:", err);
+    }
+  };
 
   // Fetch user profile
   const { data: profile, isLoading: isProfileLoading } = useQuery({
@@ -75,12 +108,20 @@ export default function PublicVault() {
   );
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col font-mono selection:bg-primary selection:text-primary-foreground">
+    <div className="min-h-screen bg-background text-foreground flex flex-col font-mono selection:bg-primary selection:text-primary-foreground pb-24">
+      
+
       
       {/* Header */}
       <header className="sticky top-0 z-40 bg-background/80 backdrop-blur-md border-b border-border">
         <div className="px-6 md:px-12 py-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-6">
+            <button
+              onClick={() => navigate('/')}
+              className="font-mono text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
+            >
+              ← MY VAULT
+            </button>
             {profile?.avatar_url ? (
               <img src={profile.avatar_url} alt={username} className="w-10 h-10 rounded-full border border-border object-cover" />
             ) : (
@@ -138,21 +179,50 @@ export default function PublicVault() {
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 w-full border-b border-border">
               {filteredPrompts.map((prompt) => (
-                <PromptCard key={prompt.id} prompt={prompt} />
+                <PromptCard 
+                  key={prompt.id} 
+                  prompt={prompt} 
+                  selectionMode={selectionMode}
+                  selectedPrompts={selectedPrompts}
+                  setSelectedPrompts={setSelectedPrompts}
+                />
               ))}
             </div>
           </div>
         )}
       </main>
 
-      {/* Footer */}
-      <footer className="w-full py-8 text-center border-t border-border mt-auto">
-        <button 
-            onClick={() => navigate('/')} 
-            className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
-        >
+      {/* Footer / CTAs */}
+      <footer className="w-full flex flex-col items-center justify-center gap-4 py-10 mt-auto">
+        {!isLoading && filteredPrompts.length > 0 && (
+          selectionMode ? (
+            <div className="flex gap-4">
+              <button
+                onClick={() => setSelectionMode(false)}
+                className="font-mono text-xs border px-4 py-3 bg-background"
+              >
+                CANCEL
+              </button>
+              <button
+                onClick={handleBulkAdd}
+                disabled={selectedPrompts.length === 0}
+                className={`font-mono text-xs uppercase tracking-widest border px-6 py-3 bg-primary text-primary-foreground ${selectedPrompts.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                ADD {selectedPrompts.length} PROMPT{selectedPrompts.length !== 1 ? 'S' : ''} TO MY VAULT
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setSelectionMode(true)}
+              className="font-mono text-xs uppercase tracking-widest px-6 py-3 border border-primary text-primary hover:bg-primary hover:text-primary-foreground transition-colors"
+            >
+              ADD PROMPTS TO YOUR VAULT
+            </button>
+          )
+        )}
+        <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground mt-4">
           POWERED BY PROMPTVAULT
-        </button>
+        </span>
       </footer>
     </div>
   );

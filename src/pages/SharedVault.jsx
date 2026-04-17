@@ -1,17 +1,49 @@
 import { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
 import { Search, RefreshCw, Share2, ArrowLeft } from 'lucide-react';
+import { addPromptToVault } from '@/services/promptService';
 import PromptCard from '@/components/PromptCard';
 import EmptyState from '@/components/EmptyState';
 
 export default function SharedVault() {
   const { vaultId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { isAuthenticated } = useAuth();
   const [search, setSearch] = useState('');
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedPrompts, setSelectedPrompts] = useState([]);
+
+  const handleBulkAdd = async () => {
+    if (!isAuthenticated) {
+      localStorage.setItem(
+        'redirectAfterAuth',
+        location.pathname + location.search
+      );
+      navigate('/auth');
+      return;
+    }
+
+    try {
+      const selected = prompts.filter(p => selectedPrompts.includes(p.id));
+
+      for (const prompt of selected) {
+        await addPromptToVault({
+          ...prompt,
+          attribution_username: vaultId,
+        });
+      }
+
+      setSelectionMode(false);
+      setSelectedPrompts([]);
+
+    } catch (err) {
+      console.error("Bulk add error:", err);
+    }
+  };
 
   // Fetch underlying profile mapper
   const { data: profile, isLoading: isProfileLoading, isError: isProfileError } = useQuery({
@@ -52,18 +84,19 @@ export default function SharedVault() {
   );
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col font-mono selection:bg-primary selection:text-primary-foreground">
+    <div className="min-h-screen bg-background text-foreground flex flex-col font-mono selection:bg-primary selection:text-primary-foreground pb-24">
       
+
+
       {/* Header */}
       <header className="sticky top-0 z-40 bg-background/80 backdrop-blur-md border-b border-border">
         <div className="px-6 md:px-8 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <button 
-              onClick={() => navigate(isAuthenticated ? '/' : '/auth')}
-              className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-              aria-label="Back to home"
+          <div className="flex items-center gap-6">
+            <button
+              onClick={() => navigate('/')}
+              className="font-mono text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
             >
-              <ArrowLeft className="w-4 h-4" />
+              ← MY VAULT
             </button>
             <div>
               <div className="flex items-center gap-2">
@@ -129,7 +162,12 @@ export default function SharedVault() {
                   className="animate-fade-in" 
                   style={{ animationDelay: `${i * 30}ms`, animationFillMode: 'both' }}
                 >
-                  <PromptCard prompt={prompt} />
+<PromptCard 
+                    prompt={prompt} 
+                    selectionMode={selectionMode}
+                    selectedPrompts={selectedPrompts}
+                    setSelectedPrompts={setSelectedPrompts}
+                  />
                 </div>
               ))}
             </div>
@@ -137,6 +175,38 @@ export default function SharedVault() {
         </div>
       </main>
 
+      {/* Footer / CTAs */}
+      <footer className="w-full flex flex-col items-center justify-center gap-4 py-10 mt-auto">
+        {!isLoading && filteredPrompts.length > 0 && (
+          selectionMode ? (
+            <div className="flex gap-4">
+              <button
+                onClick={() => setSelectionMode(false)}
+                className="font-mono text-xs border px-4 py-3 bg-background"
+              >
+                CANCEL
+              </button>
+              <button
+                onClick={handleBulkAdd}
+                disabled={selectedPrompts.length === 0}
+                className={`font-mono text-xs uppercase tracking-widest border px-6 py-3 bg-primary text-primary-foreground ${selectedPrompts.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                ADD {selectedPrompts.length} PROMPT{selectedPrompts.length !== 1 ? 'S' : ''} TO MY VAULT
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setSelectionMode(true)}
+              className="font-mono text-xs uppercase tracking-widest px-6 py-3 border border-primary text-primary hover:bg-primary hover:text-primary-foreground transition-colors"
+            >
+              ADD PROMPTS TO YOUR VAULT
+            </button>
+          )
+        )}
+        <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground mt-4">
+          POWERED BY PROMPTVAULT
+        </span>
+      </footer>
     </div>
   );
 }

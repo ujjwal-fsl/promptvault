@@ -1,40 +1,42 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { Pencil, Trash2 } from 'lucide-react';
+import { usePlan } from '@/hooks/usePlan';
+import { supabase } from '@/lib/supabase';
+import { useQueryClient } from '@tanstack/react-query';
 
 export default function AdminPromptRow({ prompt, onEdit, onDelete, flashId }) {
-  const [holdProgress, setHoldProgress] = useState(0);
-  const holdInterval = useRef(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const isFlash = flashId === prompt.id;
+  const { canMakePromptPublic } = usePlan();
+  const queryClient = useQueryClient();
 
-  const startHold = useCallback(() => {
-    setHoldProgress(0);
-    const start = Date.now();
-    holdInterval.current = setInterval(() => {
-      const elapsed = Date.now() - start;
-      const progress = Math.min(elapsed / 2000, 1);
-      setHoldProgress(progress);
-      if (progress >= 1) {
-        clearInterval(holdInterval.current);
-        holdInterval.current = null;
-        onDelete(prompt.id);
-        setHoldProgress(0);
-      }
-    }, 30);
-  }, [prompt.id, onDelete]);
+  const handleTogglePublic = async (prompt) => {
+    try {
+      const { error } = await supabase
+        .from('prompts')
+        .update({ is_public: !prompt.is_public })
+        .eq('id', prompt.id);
 
-  const cancelHold = useCallback(() => {
-    if (holdInterval.current) {
-      clearInterval(holdInterval.current);
-      holdInterval.current = null;
+      if (error) throw error;
+
+      queryClient.invalidateQueries({ queryKey: ['admin-prompts'] });
+    } catch (err) {
+      console.error("Toggle public error:", err);
     }
-    setHoldProgress(0);
-  }, []);
+  };
 
-  useEffect(() => {
-    return () => {
-      if (holdInterval.current) clearInterval(holdInterval.current);
-    };
-  }, []);
+  const handleDelete = (e) => {
+    e.stopPropagation();
+    setIsDeleting(true);
+    
+    // We instantly blast the prompt upstream!
+    // Admin.jsx controls the optimistic removal + Undo queue!
+    onDelete(prompt);
+    
+    setShowDeleteModal(false);
+    setIsDeleting(false);
+  };
 
   return (
     <div
@@ -56,6 +58,15 @@ export default function AdminPromptRow({ prompt, onEdit, onDelete, flashId }) {
 
       {/* Actions */}
       <div className="flex items-center gap-2 flex-shrink-0 pt-0.5">
+        {canMakePromptPublic && (
+          <button
+            onClick={() => handleTogglePublic(prompt)}
+            className={`font-mono text-[10px] uppercase tracking-widest border px-3 py-1 transition-colors ${prompt.is_public ? 'bg-green-600 text-white border-green-600' : 'border-border text-muted-foreground hover:bg-foreground hover:text-background'}`}
+          >
+            {prompt.is_public ? 'PUBLIC' : 'PRIVATE'}
+          </button>
+        )}
+
         <button
           onClick={() => onEdit(prompt)}
           className="p-2 text-muted-foreground hover:text-foreground transition-colors"
@@ -66,27 +77,62 @@ export default function AdminPromptRow({ prompt, onEdit, onDelete, flashId }) {
 
         <div className="relative">
           <button
-            onMouseDown={startHold}
-            onMouseUp={cancelHold}
-            onMouseLeave={cancelHold}
-            onTouchStart={startHold}
-            onTouchEnd={cancelHold}
-            className="p-2 text-muted-foreground hover:text-destructive transition-colors relative overflow-hidden"
-            aria-label={`Hold to delete ${prompt.name}`}
-            title="Hold for 2 seconds to delete"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowDeleteModal(true);
+            }}
+            className="text-red-500 hover:bg-red-50 rounded-md p-2 transition"
+            title="Delete prompt"
           >
-            <Trash2 className="h-3.5 w-3.5 relative z-10" />
-            {holdProgress > 0 && (
-              <div
-                className="absolute inset-0 bg-destructive/20 transition-none"
-                style={{
-                  clipPath: `inset(${(1 - holdProgress) * 100}% 0 0 0)`,
-                }}
-              />
-            )}
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="w-5 h-5"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+            >
+              <path d="M9 3h6a1 1 0 011 1v1h4v2H4V5h4V4a1 1 0 011-1zm1 6h2v9h-2V9zm4 0h2v9h-2V9zM6 9h2v9H6V9z" />
+            </svg>
           </button>
         </div>
       </div>
+
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 animate-fade-in">
+          <div className="bg-white border border-border p-6 w-[320px]">
+            <p className="font-mono text-sm mb-6">
+              Delete this prompt?
+            </p>
+
+            <div className="flex justify-end gap-4">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowDeleteModal(false);
+                }}
+                disabled={isDeleting}
+                className="text-muted-foreground text-sm disabled:opacity-50"
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={handleDelete}
+                disabled={isDeleting}
+                className="text-red-600 text-sm flex items-center gap-2 disabled:opacity-50"
+              >
+                {isDeleting ? (
+                  <>
+                    <span className="w-3 h-3 border-2 border-red-500 border-t-transparent rounded-full animate-spin"></span>
+                    Deleting...
+                  </>
+                ) : (
+                  "Delete"
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
