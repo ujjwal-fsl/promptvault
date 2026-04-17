@@ -13,6 +13,44 @@ import CompleteProfile from './pages/CompleteProfile';
 import Profile from './pages/Profile';
 import PublicVault from './pages/PublicVault';
 
+import React from 'react';
+
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("ErrorBoundary caught an error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-background text-foreground flex flex-col items-center justify-center p-6 font-mono text-center">
+          <h1 className="text-xl md:text-2xl font-bold uppercase tracking-widest mb-4">Application Error</h1>
+          <p className="text-muted-foreground text-sm max-w-lg mb-8 uppercase tracking-widest">
+            The application experienced a fatal rendering error. This often occurs when component state conflicts with the expected data schema.
+          </p>
+          <button 
+            onClick={() => window.location.reload()}
+            className="px-6 py-3 border border-border hover:bg-foreground hover:text-background transition-colors text-xs tracking-widest uppercase"
+          >
+            RELOAD APPLICATION
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
 
@@ -53,16 +91,19 @@ const AuthenticatedApp = () => {
 
 
 function App() {
+  console.log("APP RENDERED");
 
   return (
-    <AuthProvider>
-      <QueryClientProvider client={queryClientInstance}>
-        <Router>
-          <AuthenticatedApp />
-        </Router>
-        <Toaster />
-      </QueryClientProvider>
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <QueryClientProvider client={queryClientInstance}>
+          <Router>
+            <AuthenticatedApp />
+          </Router>
+          <Toaster />
+        </QueryClientProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   )
 }
 

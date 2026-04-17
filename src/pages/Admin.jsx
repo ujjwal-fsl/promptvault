@@ -22,7 +22,9 @@ export default function Admin() {
     }
   }, [isLoadingAuth, isAuthenticated, navigate]);
 
-  if (isLoadingAuth || !isAuthenticated) return null;
+  if (isLoadingAuth) {
+    return <div className="min-h-screen bg-background" />;
+  }
 
   const { canShareVault, canSharePublicVault, planInfo } = usePlan();
 

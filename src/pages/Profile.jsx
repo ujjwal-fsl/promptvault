@@ -19,7 +19,9 @@ export default function Profile() {
     }
   }, [isLoadingAuth, isAuthenticated, navigate]);
 
-  if (isLoadingAuth || !isAuthenticated) return null;
+  if (isLoadingAuth) {
+    return <div className="min-h-screen bg-background" />;
+  }
 
   const [saving, setSaving] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);

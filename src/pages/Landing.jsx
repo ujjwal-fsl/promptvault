@@ -24,7 +24,9 @@ export default function Landing() {
     }
   }, [isLoadingAuth, isAuthenticated, navigate]);
 
-  if (isLoadingAuth || !isAuthenticated) return null;
+  if (isLoadingAuth) {
+    return <div className="min-h-screen bg-background" />;
+  }
 
   const { canUsePublicView } = usePlan();
   
