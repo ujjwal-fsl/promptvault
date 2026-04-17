@@ -16,6 +16,8 @@ export default function PublicVault() {
   const [search, setSearch] = useState('');
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedPrompts, setSelectedPrompts] = useState([]);
+  const [status, setStatus] = useState("idle");
+  const [addedCount, setAddedCount] = useState(0);
 
   const handleBulkAdd = async () => {
     if (!isAuthenticated) {
@@ -28,7 +30,8 @@ export default function PublicVault() {
     }
 
     try {
-      // Use activePrompts or prompts to filter
+      setStatus("loading");
+
       const selected = prompts.filter(p => selectedPrompts.includes(p.id));
 
       for (const prompt of selected) {
@@ -38,11 +41,18 @@ export default function PublicVault() {
         });
       }
 
-      setSelectionMode(false);
-      setSelectedPrompts([]);
+      setAddedCount(selectedPrompts.length);
+      setSelectedPrompts([]); // Instantly clear card checkboxes
+      setStatus("success");
+
+      setTimeout(() => {
+        setStatus("idle");
+        setSelectionMode(false); // Only close toolbar after success finishes
+      }, 2000);
 
     } catch (err) {
       console.error("Bulk add error:", err);
+      setStatus("idle");
     }
   };
 
@@ -205,10 +215,25 @@ export default function PublicVault() {
               </button>
               <button
                 onClick={handleBulkAdd}
-                disabled={selectedPrompts.length === 0}
-                className={`font-mono text-xs uppercase tracking-widest border px-6 py-3 bg-primary text-primary-foreground ${selectedPrompts.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
+                disabled={selectedPrompts.length === 0 && status !== 'success'}
+                className={`font-mono text-xs uppercase tracking-widest border px-6 py-3 transition-colors flex items-center justify-center gap-2 ${
+                  (selectedPrompts.length === 0 && status !== 'success')
+                  ? 'opacity-50 cursor-not-allowed bg-primary text-primary-foreground text-opacity-50' 
+                  : 'bg-primary text-primary-foreground hover:bg-primary/90'
+                }`}
               >
-                ADD {selectedPrompts.length} PROMPT{selectedPrompts.length !== 1 ? 'S' : ''} TO MY VAULT
+                {status === "loading" ? (
+                  <>
+                    <span className="w-3 h-3 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin"></span>
+                    ADDING...
+                  </>
+                ) : status === "success" ? (
+                  <span className="animate-success flex items-center justify-center">
+                    {addedCount > 1 ? "PROMPTS ADDED!" : "PROMPT ADDED!"}
+                  </span>
+                ) : (
+                  `ADD ${selectedPrompts.length} PROMPT${selectedPrompts.length !== 1 ? 'S' : ''} TO MY VAULT`
+                )}
               </button>
             </div>
           ) : (

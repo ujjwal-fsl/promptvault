@@ -95,3 +95,21 @@
     @apply bg-background text-foreground;
   }
 }
+
+@keyframes successPop {
+  0% {
+    opacity: 0;
+    transform: scale(0.96) translateY(2px);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.04) translateY(0);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.animate-success {
+  animation: successPop 0.35s ease;
+}
