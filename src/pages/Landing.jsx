@@ -38,6 +38,7 @@ export default function Landing() {
   
   const { data: prompts = [], isLoading } = useQuery({
     queryKey: ['landing-prompts'],
+    enabled: !isLoadingAuth && isAuthenticated,
     queryFn: async () => {
       try {
         const data = await getUserPrompts();
