@@ -22,10 +22,7 @@ export const authService = {
       password,
     });
     if (error) throw error;
-    if (data.user) {
-      await authService.ensureProfile(data.user);
-    }
-    return data;
+    return data.user;
   },
 
   loginWithGoogle: async () => {
@@ -38,6 +35,7 @@ export const authService = {
 
   ensureProfile: async (user, username = null, fullNameOverride = null) => {
     if (!user) return null;
+    console.log("[ensureProfile] START", user.id);
     try {
       const fullName = 
         fullNameOverride || 
@@ -80,6 +78,7 @@ export const authService = {
              console.error('Error creating profile:', insertError);
              return null;
          }
+         console.log("[ensureProfile] DONE", newProfile);
          return newProfile;
       } else {
          // Exists -> Do NOT overwrite username. Only update missing avatar.
@@ -87,6 +86,7 @@ export const authService = {
             await supabase.from('profiles').update({ avatar_url: avatar }).eq('id', user.id);
             profile.avatar_url = avatar;
          }
+         console.log("[ensureProfile] DONE", profile);
          return profile;
       }
     } catch (e) {

@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { authService } from '@/services/authService';
 import { supabase } from '@/lib/supabase';
 
-const AuthContext = createContext();
+const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
   const navigate = useNavigate();
@@ -17,53 +17,81 @@ export const AuthProvider = ({ children }) => {
   const [appPublicSettings, setAppPublicSettings] = useState(null);
 
   useEffect(() => {
-    checkAppState();
+    const init = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (session?.user) {
+        await handleAuthenticatedUser(session.user);
+      } else {
+        setIsLoadingAuth(false);
+      }
+    };
+
+    init();
   }, []);
 
-  const checkAppState = async () => {
-    await checkUserAuth();
-  };
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        console.log("AUTH EVENT:", event);
 
-  const checkUserAuth = async () => {
-    setIsLoadingAuth(true);
+        if (session?.user) {
+          handleAuthenticatedUser(session.user);
+        } else {
+          setUser(null);
+          setIsAuthenticated(false);
+          setIsLoadingAuth(false);
 
-    const { data: { user } } = await supabase.auth.getUser();
+          if (location.pathname !== '/auth') {
+            navigate('/auth');
+          }
+        }
+      }
+    );
 
-    if (!user) {
-      setUser(null);
-      setIsAuthenticated(false);
+    return () => {
+      subscription.unsubscribe();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+
+
+  const handleAuthenticatedUser = async (user) => {
+    try {
+      setIsLoadingAuth(true);
+
+      const profilePromise = authService.ensureProfile(user);
+
+      setUser(user);
+      setIsAuthenticated(true);
       setIsLoadingAuth(false);
-      if (location.pathname !== '/auth') navigate('/auth');
-      return;
-    }
 
-    // Ensure profile exists cleanly via sync before routing
-    await authService.ensureProfile(user);
+      const profile = await profilePromise;
 
-    // Fetch guaranteed profile projection
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single();
-
-    setUser({ ...user, ...profile });
-    setIsAuthenticated(true);
-
-    const provider = user.app_metadata?.provider;
-
-    // Routing rules engine
-    if (provider === 'google' && !profile?.username) {
-      if (location.pathname !== '/complete-profile') {
-        navigate('/complete-profile');
+      if (profile) {
+        setUser({ ...user, ...profile });
       }
-    } else {
-      if (location.pathname === '/auth' || location.pathname === '/verified') {
-        navigate('/');
-      }
-    }
 
-    setIsLoadingAuth(false);
+      const provider = user.app_metadata?.provider;
+
+      if (provider === 'google' && !profile?.username) {
+        if (location.pathname !== '/complete-profile') {
+          navigate('/complete-profile');
+        }
+      } else {
+        if (location.pathname === '/auth' || location.pathname === '/verified') {
+          navigate('/');
+        }
+      }
+
+    } catch (err) {
+      console.error("AUTH HANDLER ERROR:", err);
+    } finally {
+      setTimeout(() => {
+        setIsLoadingAuth(false);
+      }, 2000);
+    }
   };
 
   const logout = async (shouldRedirect = true) => {
@@ -75,8 +103,7 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const navigateToLogin = async () => {
-    await checkUserAuth();
+  const navigateToLogin = () => {
     if (location.pathname === '/') {
       navigate('/auth');
     }
@@ -91,8 +118,7 @@ export const AuthProvider = ({ children }) => {
       authError,
       appPublicSettings,
       logout,
-      navigateToLogin,
-      checkAppState
+      navigateToLogin
     }}>
       {children}
     </AuthContext.Provider>

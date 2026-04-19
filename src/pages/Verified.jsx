@@ -8,7 +8,9 @@ export default function Verified() {
         <div className="w-2 h-2 bg-green-500" />
       </div>
       <h1 className="text-xl tracking-widest uppercase mb-4">Account Created</h1>
-      <p className="text-sm text-muted-foreground mb-8">Please check your email to confirm verification</p>
+      <p className="text-sm text-muted-foreground mb-8">
+        Your account has been successfully verified.
+      </p>
       <button
         className="border border-border hover:bg-foreground hover:text-background transition-colors px-6 py-3 tracking-widest uppercase text-xs"
         onClick={() => navigate('/auth')}

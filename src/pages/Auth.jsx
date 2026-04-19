@@ -347,22 +347,8 @@ export default function Auth() {
   const navigate = useNavigate();
   const { isAuthenticated, isLoadingAuth } = useAuth();
 
-  // Redirect authenticated users away from auth page
-  useEffect(() => {
-    if (!isLoadingAuth && isAuthenticated) {
-      const redirectPath = localStorage.getItem('redirectAfterAuth');
-      if (redirectPath) {
-        localStorage.removeItem('redirectAfterAuth');
-        setTimeout(() => {
-          navigate(redirectPath, { replace: true });
-        }, 100);
-      } else {
-        navigate('/', { replace: true });
-      }
-    }
-  }, [isLoadingAuth, isAuthenticated, navigate]);
-
-  if (!isLoadingAuth && isAuthenticated) {
+  // Navigation loops and redirects are mapped via Context
+  if (isLoadingAuth) {
     return <div className="min-h-screen bg-background" />;
   }
 
@@ -402,35 +388,23 @@ export default function Auth() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    console.log("SUBMIT CLICKED");
     const errs = validate();
-    if (Object.keys(errs).length) { setErrors(errs); return; }
+    if (Object.keys(errs).length) { 
+      console.log("VALIDATION FAILED", errs);
+      setErrors(errs); 
+      return; 
+    }
     setLoading(true);
     try {
       if (mode === 'signup') {
-        const res = await authService.signup(fields.email, fields.password, fields.username.trim(), fields.fullName.trim());
-        if (res?.user) {
-          const redirectPath = localStorage.getItem('redirectAfterAuth');
-          if (redirectPath) {
-            localStorage.removeItem('redirectAfterAuth');
-            setTimeout(() => navigate(redirectPath, { replace: true }), 100);
-          } else {
-            navigate('/');
-          }
-        }
-      } else {
-        const res = await authService.login(fields.email, fields.password);
-        if (res?.user) {
-          const redirectPath = localStorage.getItem('redirectAfterAuth');
-          if (redirectPath) {
-            localStorage.removeItem('redirectAfterAuth');
-            setTimeout(() => navigate(redirectPath, { replace: true }), 100);
-          } else {
-            navigate('/');
-          }
-        }
+        await authService.signup(fields.email, fields.password, fields.username.trim(), fields.fullName.trim());
+      }
+      if (mode === 'login') {
+        await authService.login(fields.email, fields.password);
       }
     } catch (err) {
-      console.error(err);
+      console.error("LOGIN ERROR:", err);
       setErrors({ email: err.message || 'Authentication failed' });
     } finally {
       setLoading(false);
