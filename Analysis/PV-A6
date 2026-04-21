@@ -1,0 +1,828 @@
+# PromptVault — Security Audit
+
+> 16 findings. 5 Critical. 6 Medium. 5 Low.
+> Every finding references your actual code with a beginner-friendly fix.
+
+---
+
+## How to read this audit
+
+Each finding follows the same format:
+
+- **What's happening** — what the code does today (plain English)
+- **Why it's dangerous** — what a bad actor could do
+- **Severity** — how urgently you need to fix it
+- **Fix** — step-by-step, copy-paste-ready where possible
+
+Severity scale:
+- 🔴 **CRITICAL** — Fix before going live. Active exploit risk.
+- 🟡 **MEDIUM** — Fix soon. Not immediately exploitable but weakens your defenses.
+- 🟢 **LOW** — Good practice. Fix when convenient.
+
+---
+
+## Part 1: Input Validation
+
+*Input validation means: does your app check that the data it receives is safe and reasonable before saving it?*
+
+---
+
+### Finding 1: No server-side validation on prompt creation
+
+**What's happening:**
+
+When a user creates a prompt, your UI limits the name to 80 characters and the body to 4000 characters:
+
+```js
+// AdminPromptForm.jsx line 70
+onChange={(e) => setName(e.target.value.slice(0, 80))}
+
+// AdminPromptForm.jsx line 84
+onChange={(e) => setBody(e.target.value.slice(0, 4000))}
+```
+
+But these limits only exist in the browser. The actual `createPrompt` function in [promptService.js:120-143](file:///d:/CODING/prompter/src/services/promptService.js#L120-L143) has **zero validation**:
+
+```js
+// This goes straight to the database — no checks
+const { data: prompt, error } = await supabase
+  .from('prompts')
+  .insert({
+    name: data.name,      // Could be anything
+    body: data.body,       // Could be 10MB of text
+    tags: data.tags || [],
+    ...
+  })
+```
+
+**Why it's dangerous:**
+
+Anyone can open browser DevTools, go to the Console tab, and type:
+
+```js
+// This bypasses your UI completely
+const { createPrompt } = await import('/src/services/promptService.js');
+await createPrompt({ name: 'x', body: 'y'.repeat(10000000) }); // 10MB prompt
+```
+
+Or worse — they can use the Supabase client directly (more on that in Part 2).
+
+**Severity:** 🔴 **CRITICAL**
+
+**Fix — add database constraints (15 minutes, done once, protects forever):**
+
+Go to your Supabase Dashboard → SQL Editor → run this:
+
+```sql
+-- Prevent absurdly long prompts
+ALTER TABLE prompts 
+  ADD CONSTRAINT prompts_name_length 
+  CHECK (char_length(name) BETWEEN 1 AND 200);
+
+ALTER TABLE prompts 
+  ADD CONSTRAINT prompts_body_length 
+  CHECK (char_length(body) BETWEEN 1 AND 10000);
+
+-- Prevent too many tags
+ALTER TABLE prompts 
+  ADD CONSTRAINT prompts_tags_limit 
+  CHECK (array_length(tags, 1) IS NULL OR array_length(tags, 1) <= 20);
+```
+
+This means even if someone bypasses your UI, the **database itself refuses** the bad data. Think of it as a lock on the vault door, not just a sign saying "please don't enter."
+
+---
+
+### Finding 2: Username uniqueness is enforced only in application code
+
+**What's happening:**
+
+When a user picks a username, your code checks if it's taken:
+
+```js
+// authService.js line 126-136
+const { data: existing } = await supabase
+  .from('profiles')
+  .select('id')
+  .eq('username', username)
+  .maybeSingle();
+
+if (existing && existing.id !== userId) {
+  throw new Error('Username already taken');
+}
+```
+
+This is a "check-then-act" pattern. Between the check ("is this username taken?") and the act ("save it"), another user could grab the same username. It's like checking if a parking spot is empty, then walking to your car to drive into it — someone else could take it while you walk.
+
+**Why it's dangerous:**
+
+Two users signing up at the exact same moment with the same username will both pass the check, and both will save. You now have **duplicate usernames** — which breaks vault URLs, public profiles, and any lookup-by-username query.
+
+**Severity:** 🟡 **MEDIUM**
+
+**Fix — add a unique constraint on the database column:**
+
+```sql
+-- This makes the database enforce uniqueness at the deepest level
+ALTER TABLE profiles 
+  ADD CONSTRAINT profiles_username_unique 
+  UNIQUE (username);
+```
+
+Now even if two requests arrive at the exact same millisecond, the database guarantees only one succeeds. The other gets a clear error you can catch:
+
+```js
+// In authService.updateProfile — catch the specific error
+} catch (e) {
+  if (e.code === '23505') { // PostgreSQL unique violation code
+    throw new Error('Username already taken');
+  }
+  throw e;
+}
+```
+
+---
+
+### Finding 3: No file type/size enforcement on avatar upload
+
+**What's happening:**
+
+[Profile.jsx:120-123](file:///d:/CODING/prompter/src/pages/Profile.jsx#L120-L123) checks the file type client-side:
+
+```js
+if (!file.type.startsWith('image/')) {
+  alert('Please select an image file');
+  return;
+}
+```
+
+But there's **no file size check**. A user could upload a 50MB image. The code then converts it to WebP client-side (which reduces size), but the conversion itself will consume massive memory for a huge image and could **crash the browser tab**.
+
+There's also no server-side file type validation. Supabase Storage accepts whatever the client sends. Someone could use the Supabase client directly to upload a `.exe` file to the avatars bucket (though it wouldn't cause harm as an avatar URL).
+
+**Severity:** 🟢 **LOW**
+
+**Fix — add a size check before processing:**
+
+```js
+// Profile.jsx — add after the type check
+const MAX_SIZE = 5 * 1024 * 1024; // 5MB
+if (file.size > MAX_SIZE) {
+  toast({ title: "File too large", description: "Maximum size is 5MB", variant: "destructive" });
+  return;
+}
+```
+
+Also configure the Supabase Storage bucket to limit file sizes:
+- Dashboard → Storage → `avatars` bucket → Settings → Max file size: `5MB`
+- Allowed MIME types: `image/*`
+
+---
+
+### Finding 4: No rate limiting on any form submission
+
+**What's happening:**
+
+There is nothing preventing a user (or a script) from submitting the prompt creation form 1,000 times in 10 seconds. The "Save" button disables during a single save, but re-enables immediately after. A simple script can call `createPrompt()` in a loop.
+
+**Why it's dangerous:**
+
+A malicious user could fill your database with garbage, inflate your Supabase row count (which affects your billing), and degrade performance for everyone.
+
+**Severity:** 🟡 **MEDIUM**
+
+**Fix — add a simple client-side cooldown + Supabase rate limiting:**
+
+Client-side (won't stop determined attackers, but stops accidental spam):
+```js
+// Simple cooldown ref in AdminPromptForm
+const lastSubmit = useRef(0);
+
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  const now = Date.now();
+  if (now - lastSubmit.current < 3000) return; // 3-second cooldown
+  lastSubmit.current = now;
+  // ... rest of submit logic
+};
+```
+
+Server-side (actually enforced): Enable Supabase's built-in rate limiting in your project settings, or add a PostgreSQL function that limits inserts per user per minute.
+
+---
+
+### Finding 5: `tags` field accepts any data type
+
+**What's happening:**
+
+[promptService.js:130](file:///d:/CODING/prompter/src/services/promptService.js#L130):
+```js
+tags: data.tags || [],
+```
+
+There's no check that `tags` is actually an array of strings. Someone could pass `tags: [1, 2, {evil: true}, null]` or `tags: "not-an-array"`.
+
+**Severity:** 🟢 **LOW**
+
+**Fix:**
+```js
+// Sanitize tags before insert
+const sanitizedTags = Array.isArray(data.tags)
+  ? data.tags.filter(t => typeof t === 'string').map(t => t.trim().slice(0, 50))
+  : [];
+```
+
+---
+
+## Part 2: Unsafe API Exposure
+
+*API exposure means: can someone access your backend in ways you didn't intend?*
+
+---
+
+### Finding 6: Your Supabase anon key grants full access without RLS
+
+**What's happening — think of it like this:**
+
+Your app communicates with your database using two pieces of information:
+1. **Supabase URL**: `https://lvwuhzurgnhdzwldnkyx.supabase.co` — this is like the address of your house
+2. **Anon key**: `sb_publishable_kNdXpCUWaig2tNLsbxDs3w_B-VisW5u` — this is like a key you give to delivery drivers
+
+Both are embedded in your frontend JavaScript. **Anyone who visits your website can see them** by opening DevTools → Sources → searching for "supabase."
+
+The anon key is **designed** to be public — Supabase expects this. The protection is supposed to come from **Row-Level Security (RLS)** — database rules that say "this user can only see their own data."
+
+**But you haven't enabled RLS.**
+
+Without RLS, the anon key gives full access to every row in every table. It's like giving a delivery driver a master key to every room in your house.
+
+**Why it's dangerous — a practical attack:**
+
+Any visitor to your site can open the browser console and run:
+
+```js
+import { createClient } from 'https://esm.sh/@supabase/supabase-js';
+
+// These values are visible in your JS bundle
+const sb = createClient(
+  'https://lvwuhzurgnhdzwldnkyx.supabase.co',
+  'sb_publishable_kNdXpCUWaig2tNLsbxDs3w_B-VisW5u'
+);
+
+// Read ALL users' data
+const { data } = await sb.from('profiles').select('*');
+console.log(data); // Every user's email, name, social links
+
+// Read ALL prompts (including other users' private ones)
+const { data: prompts } = await sb.from('prompts').select('*');
+
+// Delete someone else's prompts
+await sb.from('prompts').delete().eq('created_by', 'some-other-user-id');
+
+// Modify someone's profile
+await sb.from('profiles').update({ full_name: 'HACKED' }).eq('username', 'victim');
+```
+
+**This is not theoretical.** If your app is deployed, this works right now.
+
+**Severity:** 🔴 **CRITICAL — this is the #1 security issue in your entire app**
+
+**Fix — Enable Row-Level Security (30 minutes):**
+
+Go to Supabase Dashboard → SQL Editor → run ALL of these:
+
+```sql
+-- ═══════════════════════════════════════════
+-- STEP 1: Enable RLS (blocks ALL access by default)
+-- ═══════════════════════════════════════════
+
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE prompts ENABLE ROW LEVEL SECURITY;
+
+-- ═══════════════════════════════════════════
+-- STEP 2: Profiles policies
+-- ═══════════════════════════════════════════
+
+-- Anyone can VIEW profiles (needed for public vaults)
+CREATE POLICY "Anyone can read profiles"
+  ON profiles FOR SELECT
+  USING (true);
+
+-- Users can only UPDATE their own profile
+CREATE POLICY "Users update own profile"
+  ON profiles FOR UPDATE
+  USING (auth.uid() = id)
+  WITH CHECK (auth.uid() = id);
+
+-- Users can only INSERT their own profile (signup)
+CREATE POLICY "Users insert own profile"
+  ON profiles FOR INSERT
+  WITH CHECK (auth.uid() = id);
+
+-- ═══════════════════════════════════════════
+-- STEP 3: Prompts policies
+-- ═══════════════════════════════════════════
+
+-- Users can see their OWN prompts (all of them)
+CREATE POLICY "Users read own prompts"
+  ON prompts FOR SELECT
+  USING (created_by = auth.uid());
+
+-- Anyone can see PUBLIC prompts (for public/shared vaults)
+CREATE POLICY "Anyone reads public prompts"
+  ON prompts FOR SELECT
+  USING (is_public = true);
+
+-- Users can only CREATE prompts for themselves
+CREATE POLICY "Users create own prompts"
+  ON prompts FOR INSERT
+  WITH CHECK (created_by = auth.uid());
+
+-- Users can only UPDATE their own prompts
+CREATE POLICY "Users update own prompts"
+  ON prompts FOR UPDATE
+  USING (created_by = auth.uid())
+  WITH CHECK (created_by = auth.uid());
+
+-- Users can only DELETE their own prompts
+CREATE POLICY "Users delete own prompts"
+  ON prompts FOR DELETE
+  USING (created_by = auth.uid());
+```
+
+After running this, the exact same anon key now only allows users to access their own data. The key didn't change — but the **database now enforces rules**.
+
+> [!IMPORTANT]
+> After enabling RLS, test your entire app. Some features may break if they relied on reading other users' non-public data — particularly **SharedVault**, which currently reads ALL prompts from another user regardless of `is_public`. Fix that query first.
+
+---
+
+### Finding 7: SharedVault exposes private prompts
+
+**What's happening:**
+
+[SharedVault.jsx:76-80](file:///d:/CODING/prompter/src/pages/SharedVault.jsx#L76-L80):
+```js
+const { data, error } = await supabase
+  .from('prompts')
+  .select('*')
+  .eq('created_by', profile.id)
+  // ← No .eq('is_public', true) filter!
+  .order('created_at', { ascending: false });
+```
+
+Compare with PublicVault, which correctly filters:
+```js
+.eq('created_by', profile.id)
+.eq('is_public', true)          // ← PublicVault does this
+```
+
+SharedVault shows **every** prompt the user has created, including ones they marked as private.
+
+**Why it's dangerous:**
+
+If User A has 50 prompts and marked 10 as private (maybe they contain confidential client information or internal processes), anyone with User A's vault link can see all 50 — including the private 10.
+
+**Severity:** 🔴 **CRITICAL — active privacy leak**
+
+**Fix — one line:**
+
+```js
+// SharedVault.jsx line 79 — add the filter
+.eq('created_by', profile.id)
+.eq('is_public', true)          // ← ADD THIS LINE
+.order('created_at', { ascending: false });
+```
+
+> [!NOTE]
+> **Design decision needed:** If SharedVault is supposed to show ALL prompts (as a "full vault share"), then it should be a **protected** route that requires the vault owner to explicitly grant access (e.g., with a secret token in the URL). Currently, anyone who knows/guesses a username can see everything.
+
+---
+
+### Finding 8: `incrementUsage` is abusable — anyone can inflate counts
+
+**What's happening:**
+
+[promptService.js:165-189](file:///d:/CODING/prompter/src/services/promptService.js#L165-L189) lets any authenticated user increment the usage count of **any prompt** — not just their own:
+
+```js
+export const incrementUsage = async (promptId) => {
+  // Fetches current count, adds 1, writes it back
+  // No check: does this user own this prompt?
+  // No check: has this user already incremented today?
+};
+```
+
+**Why it's dangerous:**
+
+A user could write a script to call `incrementUsage` 10,000 times on their own prompt to fake popularity. Or they could inflate a competitor's count to make certain filtering unreliable.
+
+**Severity:** 🟡 **MEDIUM**
+
+**Fix — two layers:**
+
+1. After enabling RLS (Finding #6), add a policy that only lets users update `usage_count` on their own prompts.
+
+2. Replace the client-side increment with a server-side RPC function:
+```sql
+CREATE OR REPLACE FUNCTION increment_usage(prompt_id UUID)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  UPDATE prompts
+  SET usage_count = usage_count + 1
+  WHERE id = prompt_id
+  AND created_by = auth.uid();  -- Only the owner can increment
+END;
+$$;
+```
+
+---
+
+### Finding 9: Plan enforcement is client-side only
+
+**What's happening:**
+
+Your plan system ([plans.js](file:///d:/CODING/prompter/src/lib/plans.js)) controls what features users can see in the UI. For example, only Creator plan users see the "Share Public Vault" button.
+
+But this is purely a **visual restriction**. The `plan` field lives in the `profiles` table. Without RLS, a user could:
+
+```js
+// Change their own plan to Creator Plus for free
+await supabase.from('profiles').update({ plan: 'CREATOR_PLUS' }).eq('id', myUserId);
+```
+
+Even with RLS enabled (users can update their own profile), the plan field is still updatable.
+
+**Why it's dangerous:**
+
+Any user can upgrade themselves to the highest plan without paying, unlocking all features including public vaults, social links, and future premium features.
+
+**Severity:** 🔴 **CRITICAL**
+
+**Fix — exclude `plan` from user-editable fields:**
+
+Option A (RLS policy approach): Create a policy that prevents updating the `plan` column:
+```sql
+-- Drop existing update policy
+DROP POLICY IF EXISTS "Users update own profile" ON profiles;
+
+-- Recreate without allowing plan changes
+CREATE POLICY "Users update own profile"
+  ON profiles FOR UPDATE
+  USING (auth.uid() = id)
+  WITH CHECK (
+    auth.uid() = id
+    AND plan = (SELECT plan FROM profiles WHERE id = auth.uid()) -- plan can't change
+  );
+```
+
+Option B (simpler — use a database trigger):
+```sql
+CREATE OR REPLACE FUNCTION prevent_plan_self_update()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- Only allow plan changes from service_role key (admin/backend)
+  IF NEW.plan != OLD.plan AND current_setting('role') != 'service_role' THEN
+    NEW.plan := OLD.plan; -- silently ignore the change
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER protect_plan
+  BEFORE UPDATE ON profiles
+  FOR EACH ROW
+  EXECUTE FUNCTION prevent_plan_self_update();
+```
+
+Now only your Supabase Dashboard (or a backend using the `service_role` key) can change someone's plan.
+
+---
+
+## Part 3: Authentication Weaknesses
+
+*Authentication means: how does your app verify who someone is, and can that verification be tricked?*
+
+---
+
+### Finding 10: Auth state race condition can corrupt user data
+
+**What's happening:**
+
+[AuthContext.jsx](file:///d:/CODING/prompter/src/lib/AuthContext.jsx) has two auth initialization paths that can collide:
+
+1. **`init()`** on line 20 — fires on component mount, calls `getSession()`
+2. **`onAuthStateChange`** on line 34 — fires when Supabase detects auth events
+
+Both call `handleAuthenticatedUser()`, which does `setUser()`, `setIsAuthenticated()`, and `setIsLoadingAuth()`. If both fire for the same login event (which often happens), you get:
+- Two `ensureProfile()` calls → two database reads
+- Two `setUser()` calls → the second overwrites the first
+- Two `setTimeout(() => setIsLoadingAuth(false), 2000)` calls → delayed state conflicts
+
+**Why it's dangerous:**
+
+This isn't an attack vector — it's a **reliability issue**. Under normal usage, the user might see a 4-second loading spinner (two stacked 2-second delays) or briefly see incorrect profile data before the second call resolves.
+
+**Severity:** 🟡 **MEDIUM**
+
+**Fix — deduplicate with a processed flag:**
+
+```js
+const processedSession = useRef(null);
+
+const handleAuthenticatedUser = async (user) => {
+  // Skip if we already processed this exact session
+  if (processedSession.current === user.id) return;
+  processedSession.current = user.id;
+
+  try {
+    setIsLoadingAuth(true);
+    const profile = await authService.ensureProfile(user);
+    setUser(profile ? { ...user, ...profile } : user);
+    setIsAuthenticated(true);
+  } catch (err) {
+    console.error("AUTH HANDLER ERROR:", err);
+  } finally {
+    setIsLoadingAuth(false); // No setTimeout!
+  }
+};
+```
+
+---
+
+### Finding 11: No session timeout or refresh token rotation
+
+**What's happening:**
+
+[supabase.js](file:///d:/CODING/prompter/src/lib/supabase.js):
+```js
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+```
+
+No auth configuration options are passed. This means Supabase uses defaults:
+- Access token expires in **1 hour** (auto-refreshed — this is fine)
+- Refresh token **never expires** unless revoked
+- No `detectSessionInUrl` configuration
+- No `persistSession` override
+
+**Why it's dangerous:**
+
+If a user logs in on a public computer and forgets to log out, anyone who opens that browser can access their account indefinitely. The refresh token sitting in localStorage will generate new access tokens forever.
+
+**Severity:** 🟡 **MEDIUM**
+
+**Fix — add session configuration:**
+
+```js
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: true,
+    // Supabase project settings → Auth → JWT expiry 
+    // Set to 3600 (1 hour) in Dashboard
+  }
+});
+```
+
+Also, in Supabase Dashboard → Authentication → Settings:
+- Enable "Refresh Token Rotation"
+- Set "Refresh Token Reuse Interval" to a reasonable window (e.g., 10 seconds)
+- This means old refresh tokens can't be replayed
+
+---
+
+### Finding 12: CompleteProfile has no escape route
+
+**What's happening:**
+
+When a Google OAuth user has no username, [AuthContext.jsx:78-81](file:///d:/CODING/prompter/src/lib/AuthContext.jsx#L78-L81) redirects to `/complete-profile`:
+
+```js
+if (provider === 'google' && !profile?.username) {
+  if (location.pathname !== '/complete-profile') {
+    navigate('/complete-profile');
+  }
+}
+```
+
+CompleteProfile.jsx has no logout button. If the user hits the browser back button, AuthContext detects they still have no username and redirects them right back. **The user is trapped.**
+
+**Why it's dangerous:**
+
+This isn't a security exploit — it's a UX trap that violates user trust. A user who changes their mind about signing up has no way to leave without closing the browser tab (which still leaves their session active).
+
+**Severity:** 🟢 **LOW**
+
+**Fix — add a logout escape hatch to CompleteProfile:**
+
+```jsx
+// CompleteProfile.jsx — add below the form
+<button
+  type="button"
+  onClick={async () => {
+    await supabase.auth.signOut();
+    window.location.href = '/auth';
+  }}
+  className="pv-cp-btn"
+  style={{ background: 'transparent', color: '#6b7280', border: '1px solid #d1d5db', marginTop: 12 }}
+>
+  CANCEL & LOG OUT
+</button>
+```
+
+---
+
+### Finding 13: No protection against session fixation on OAuth redirect
+
+**What's happening:**
+
+After Google OAuth completes, the user is redirected back to your app. [AuthContext.jsx:34-50](file:///d:/CODING/prompter/src/lib/AuthContext.jsx#L34-L50) picks up the session via `onAuthStateChange`. 
+
+But there's no verification that the OAuth state parameter matches what was sent. Supabase handles this internally for its default OAuth flow, so **you're protected** as long as you don't implement custom OAuth state handling.
+
+**Severity:** ✅ **Not an issue — Supabase handles this correctly**
+
+---
+
+## Part 4: Data Protection
+
+*Data protection means: is user data stored safely, transmitted securely, and not accidentally leaked?*
+
+---
+
+### Finding 14: Supabase credentials may exist in git history
+
+**What's happening:**
+
+Your `.env` file contains:
+```
+VITE_SUPABASE_URL=https://lvwuhzurgnhdzwldnkyx.supabase.co
+VITE_SUPABASE_ANON_KEY=sb_publishable_kNdXpCUWaig2tNLsbxDs3w_B-VisW5u
+```
+
+Your `.gitignore` correctly excludes `.env`. But the **anon key** is a publishable key — it's designed to be in frontend code and is embedded in your deployed JavaScript bundle. So this isn't a secret being leaked — it's working as intended.
+
+**However:** If you ever add a `SUPABASE_SERVICE_ROLE_KEY` (the admin key with full access) to this `.env` file, and it has a `VITE_` prefix, Vite would include it in the frontend build. That would be catastrophic.
+
+**Severity:** 🟢 **LOW** (current state is ok, but one mistake away from critical)
+
+**Fix — add a safety rule:**
+
+```env
+# .env — SAFE: These are public/publishable keys
+VITE_SUPABASE_URL=https://...
+VITE_SUPABASE_ANON_KEY=sb_publishable_...
+
+# ⚠️ NEVER add VITE_ prefix to secret keys!
+# SUPABASE_SERVICE_ROLE_KEY=... (no VITE_ prefix = not bundled into frontend)
+```
+
+Add a comment to `.env` as a reminder. Any env var starting with `VITE_` gets baked into the JavaScript that every visitor downloads.
+
+---
+
+### Finding 15: Console logs leak internal data in production
+
+**What's happening:**
+
+Your app has 20+ `console.log` statements that run in production, including:
+
+```js
+// authService.js line 38
+console.log("[ensureProfile] START", user.id);
+
+// authService.js line 81
+console.log("[ensureProfile] DONE", newProfile);
+// ↑ This logs the ENTIRE profile object: email, plan, username, social links
+
+// AuthContext.jsx line 36
+console.log("AUTH EVENT:", event);
+
+// PublicVault.jsx line 69
+console.log("Fetched profile:", data);
+// ↑ This logs another user's full profile when visiting their public vault
+```
+
+**Why it's dangerous:**
+
+Any visitor can open DevTools → Console and see:
+- User IDs (UUIDs)
+- Full profile objects (emails, plans, social links)
+- Auth event types
+- Database query results
+
+This information helps an attacker understand your data model and find user IDs to target (especially relevant because of Finding #6 — no RLS).
+
+**Severity:** 🟡 **MEDIUM**
+
+**Fix — remove all console.log calls or replace with a conditional logger:**
+
+Quick fix — find and remove all debug logs:
+```bash
+# Run this in your terminal to find them all
+grep -rn "console.log\|console.warn" src/ --include="*.jsx" --include="*.js" | grep -v node_modules
+```
+
+Better fix — create a simple logger that only works in development:
+```js
+// src/lib/logger.js
+const isDev = import.meta.env.DEV;
+
+export const logger = {
+  log: (...args) => isDev && console.log(...args),
+  warn: (...args) => isDev && console.warn(...args),
+  error: (...args) => console.error(...args), // Always log errors
+};
+```
+
+Replace all `console.log` with `logger.log`. In production builds, the logs disappear.
+
+---
+
+### Finding 16: No data export or deletion capability (GDPR)
+
+**What's happening:**
+
+If a European user requests their data (GDPR Article 15 — Right of Access) or asks you to delete their account (Article 17 — Right to Erasure), you have **no mechanism** to do either. There's no "Download My Data" button, no "Delete Account" button, and no admin tool for it.
+
+**Why it's dangerous:**
+
+GDPR non-compliance fines can be up to €20 million or 4% of annual revenue (whichever is higher). Even if you're a small app, a user complaint to a data protection authority could trigger an investigation.
+
+**Severity:** 🟡 **MEDIUM** (legal risk, not technical)
+
+**Fix — add a delete account function:**
+
+```js
+// authService.js — add this function
+deleteAccount: async (userId) => {
+  // 1. Delete all user's prompts
+  await supabase.from('prompts').delete().eq('created_by', userId);
+
+  // 2. Delete avatar from storage
+  await supabase.storage.from('avatars').remove([`${userId}.webp`]);
+
+  // 3. Delete profile
+  await supabase.from('profiles').delete().eq('id', userId);
+
+  // 4. Sign out (clears session)
+  await supabase.auth.signOut();
+
+  // Note: Deleting from auth.users requires the service_role key
+  // Do this via a Supabase Edge Function or Dashboard
+},
+```
+
+Add a "Delete My Account" button to Profile.jsx with a confirmation dialog.
+
+---
+
+## Summary — Fix Priority Order
+
+### Fix today (before real users sign up)
+
+| # | Finding | Action | Time |
+|---|---------|--------|------|
+| **6** | No RLS — full database exposed | Run the SQL policies above | 30 min |
+| **7** | SharedVault shows private prompts | Add `.eq('is_public', true)` | 2 min |
+| **9** | Users can upgrade their own plan | Add trigger to protect `plan` column | 15 min |
+| **1** | No server-side input validation | Add database constraints | 15 min |
+
+### Fix this week
+
+| # | Finding | Action | Time |
+|---|---------|--------|------|
+| **2** | Username uniqueness race condition | Add UNIQUE constraint | 5 min |
+| **8** | Usage count inflation | Replace with RPC function | 15 min |
+| **15** | Console logs leak data | Replace with conditional logger | 20 min |
+| **10** | Auth race condition | Add processed session ref | 15 min |
+| **4** | No rate limiting | Add client-side cooldown | 10 min |
+
+### Fix before scaling
+
+| # | Finding | Action | Time |
+|---|---------|--------|------|
+| **11** | No refresh token rotation | Configure in Supabase Dashboard | 5 min |
+| **16** | No GDPR compliance | Add delete account function | 1 hr |
+| **3** | No avatar file size check | Add client-side + Storage config | 10 min |
+| **5** | Tags not sanitized | Add validation before insert | 5 min |
+| **12** | CompleteProfile trap | Add logout button | 5 min |
+| **14** | Service key safety | Add comments to .env | 2 min |
+
+### Total time: ~3 hours to go from unprotected to reasonably secure
+
+---
+
+## Security Score
+
+| Area | Before fixes | After fixes |
+|------|-------------|-------------|
+| **Input Validation** | ⭐ (1/5) | ⭐⭐⭐⭐ |
+| **API Exposure** | ⭐ (1/5) — wide open | ⭐⭐⭐⭐ |
+| **Authentication** | ⭐⭐⭐ (3/5) — Supabase does the heavy lifting | ⭐⭐⭐⭐ |
+| **Data Protection** | ⭐⭐ (2/5) | ⭐⭐⭐⭐ |
+| **Overall** | ⭐⭐ — **not production-ready** | ⭐⭐⭐⭐ — **solid for an early SaaS** |

@@ -1,0 +1,349 @@
+# PromptVault — Future Change Simulation
+
+> Stress-testing your codebase against 4 realistic scenarios.  
+> Every claim references actual files and line numbers.
+
+---
+
+## Scenario 1: Change Database Structure
+
+**The change:** You rename columns, add new tables, or restructure relationships.  
+Example: rename `name` → `title`, `body` → `content`, add a `folders` table, add `updated_at` tracking.
+
+---
+
+### What breaks — file by file
+
+Your codebase has **zero abstraction between Supabase column names and UI code**. Database field names (`name`, `body`, `is_public`, `created_by`, `usage_count`) appear as raw strings directly in page components, service functions, and even JSX rendering logic.
+
+Here's the blast radius of renaming `name` → `title` and `body` → `content`:
+
+| File | Lines affected | What breaks |
+|------|---------------|-------------|
+| [promptService.js](file:///d:/CODING/prompter/src/services/promptService.js) | Lines 128, 129, 200, 260, 269, 270 | Every `.insert()`, `.select()`, `.ilike()` query uses `name` and `body` as raw strings |
+| [AdminPromptForm.jsx](file:///d:/CODING/prompter/src/components/admin/AdminPromptForm.jsx) | Lines 11, 33-34 | Reads `editingPrompt.name`, sends `{ name, body }` to createPrompt |
+| [AdminPromptRow.jsx](file:///d:/CODING/prompter/src/components/admin/AdminPromptRow.jsx) | Lines 52, 55 | Renders `prompt.name` and `prompt.body` |
+| [PromptCard.jsx](file:///d:/CODING/prompter/src/components/PromptCard.jsx) | Lines 75, 117, 129, 139 | Copies `prompt.body`, displays `prompt.name` |
+| [Landing.jsx](file:///d:/CODING/prompter/src/pages/Landing.jsx) | Lines 56-57 | Search filter checks `p.name` and `p.body` |
+| [Admin.jsx](file:///d:/CODING/prompter/src/pages/Admin.jsx) | Lines 155-156 | Search filter checks `p.name` and `p.body` |
+| [PublicVault.jsx](file:///d:/CODING/prompter/src/pages/PublicVault.jsx) | Lines 115-116 | Search filter checks `p.name` and `p.body` |
+| [SharedVault.jsx](file:///d:/CODING/prompter/src/pages/SharedVault.jsx) | Lines 93-94 | Search filter checks `p.name` and `p.body` |
+| [addPromptToVault](file:///d:/CODING/prompter/src/services/promptService.js#L240-L280) | Lines 240, 259-260, 269-270 | Duplicate check uses `name` and `body`, insert uses both |
+
+**That's 9 files and 25+ individual lines** for renaming just two columns. And this is your simplest table.
+
+Renaming `profiles` columns is worse — `username`, `full_name`, `avatar_url`, `plan`, `is_public_profile`, and the social fields are scattered across [AuthContext.jsx](file:///d:/CODING/prompter/src/lib/AuthContext.jsx), [authService.js](file:///d:/CODING/prompter/src/services/authService.js), [Profile.jsx](file:///d:/CODING/prompter/src/pages/Profile.jsx), [PublicVault.jsx](file:///d:/CODING/prompter/src/pages/PublicVault.jsx), [SharedVault.jsx](file:///d:/CODING/prompter/src/pages/SharedVault.jsx), [CompleteProfile.jsx](file:///d:/CODING/prompter/src/pages/CompleteProfile.jsx), and [plans.js](file:///d:/CODING/prompter/src/lib/plans.js).
+
+### Adding a new table (e.g., `folders`)
+
+| What you'd need to build | Exists today? |
+|--------------------------|---------------|
+| Service file for folder CRUD | ❌ No pattern for creating new service files quickly — each one is hand-written imperative code |
+| React Query hooks for folder data | ❌ No custom hooks wrapping queries — each page writes its own inline `useQuery` |
+| Relational join (prompts → folders) | ❌ No existing join queries to model from. Every query is flat single-table `.select('*')` |
+| Migration strategy | ❌ No migration tooling. You'd manually alter tables in Supabase Dashboard |
+
+### Difficulty: 🟠 Hard (for what should be easy)
+
+Not because the change itself is complex, but because **there is no data mapping layer**. You're essentially hand-editing raw SQL column names scattered across your entire UI.
+
+### Architecture failure point
+
+```
+Database Column Names → Service Functions → React Components → JSX Rendering
+        ↑                                                          ↑
+     ┌──┴──────── No transformation layer ─────────────────────────┘
+     │
+     └── Change here? Manually grep-and-replace across 9+ files.
+```
+
+### What would make this survivable
+
+A **data transformation layer** — a simple function that maps database rows to app-level objects:
+
+```js
+// lib/mappers.js
+export const mapPrompt = (row) => ({
+  id: row.id,
+  title: row.name,        // DB column → app field
+  content: row.body,       // DB column → app field
+  tags: row.tags || [],
+  isPublic: row.is_public,
+  usageCount: row.usage_count,
+  createdBy: row.created_by,
+  createdAt: row.created_at,
+});
+```
+
+Change the DB column? Update one line in the mapper. UI code never sees raw column names.
+
+---
+
+## Scenario 2: Add AI-Powered Auto-Tagging
+
+**The change:** When a user creates a prompt, an AI model reads the content and auto-generates relevant tags (e.g., "react", "debugging", "seo", "creative-writing").
+
+---
+
+### The fundamental problem: You have no backend
+
+Your entire application runs in the browser. There is no server, no API layer, no Edge Functions, no Cloud Functions. The Supabase client talks directly to the database from the user's browser.
+
+AI tagging requires:
+1. Sending prompt content to an AI API (OpenAI, Gemini, etc.)
+2. An API key for that service
+3. Processing time (1-3 seconds per prompt)
+
+**You cannot put an AI API key in your frontend.** It would be visible in the JavaScript bundle. Anyone could extract it and run up your bill.
+
+### What you'd need to build
+
+| Component | Exists? | Effort |
+|-----------|---------|--------|
+| **Supabase Edge Function** (serverless backend) | ❌ Nothing exists | New infrastructure — you'd write Deno/TypeScript functions |
+| **AI API integration** (OpenAI/Gemini client) | ❌ | Standard API call, but needs key management |
+| **Database trigger** (auto-call function on insert) | ❌ No triggers configured | SQL trigger + webhook |
+| **Tag UI in AdminPromptForm** | ❌ Tags field exists in schema but AdminPromptForm doesn't have a tag input | UI work needed |
+| **Tag display in PromptCard** | ⚠️ Partial — PublicVault search checks `p.tags` but no visual tag chips | UI work needed |
+| **Tag filtering on Landing/Admin** | ❌ Search only checks `name` and `body` | New filter logic |
+| **Loading/pending state for AI processing** | ❌ No concept of async background jobs | New UX pattern |
+
+### File-by-file impact
+
+| File | Change needed |
+|------|---------------|
+| [AdminPromptForm.jsx](file:///d:/CODING/prompter/src/components/admin/AdminPromptForm.jsx) | Add tag display, "AI generating..." indicator, manual tag editing |
+| [promptService.js](file:///d:/CODING/prompter/src/services/promptService.js) | `createPrompt` needs to either call Edge Function or the function triggers automatically |
+| [PromptCard.jsx](file:///d:/CODING/prompter/src/components/PromptCard.jsx) | Display tag chips — this component is already 205 lines and overloaded |
+| [Landing.jsx](file:///d:/CODING/prompter/src/pages/Landing.jsx) | Add tag filter dropdown/chips alongside search |
+| [Admin.jsx](file:///d:/CODING/prompter/src/pages/Admin.jsx) | Same tag filter |
+| New: `supabase/functions/auto-tag/` | Entirely new Edge Function directory |
+
+### Where architecture fails
+
+**1. No backend abstraction at all**
+
+Your services call `supabase.from('prompts').insert(...)` directly. There's no hook point to say "after insert, do X." You'd have to either:
+- **Database trigger** → calls a Supabase Edge Function (best approach, but you have zero Edge Function infrastructure today)
+- **Client-side chain** → call createPrompt, then call a tagging API, then update tags (fragile, slow, exposes API key)
+
+**2. No job/queue concept**
+
+AI tagging takes 2-3 seconds. Your current UX pattern is: call function → await response → done. There's no concept of "this prompt is being processed" or retry-on-failure. If the AI call times out, the tags silently never arrive.
+
+**3. `PromptCard` can't handle more complexity**
+
+It's already a 205-line god component doing 6 jobs. Adding tag rendering, tag click-to-filter interaction, and an "AI-tagged" badge would push it past 280+ lines. It desperately needs decomposition *before* you add features.
+
+### Difficulty: 🔴 Very Hard
+
+Not because AI tagging is inherently difficult — it's a well-solved problem. But because your architecture has **no server-side layer** to attach it to. You'd essentially be building backend infrastructure from scratch.
+
+### Recommended approach
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Admin as AdminPromptForm
+    participant PS as promptService
+    participant SB as Supabase DB
+    participant TG as DB Trigger
+    participant EF as Edge Function
+    participant AI as OpenAI API
+
+    User->>Admin: Creates prompt
+    Admin->>PS: createPrompt({ name, body })
+    PS->>SB: INSERT into prompts (tags: [])
+    SB->>TG: AFTER INSERT trigger fires
+    TG->>EF: Calls auto-tag Edge Function
+    EF->>AI: "Generate tags for this prompt"
+    AI-->>EF: ["react", "debugging", "hooks"]
+    EF->>SB: UPDATE prompts SET tags = [...] WHERE id = X
+    Note over User: Tags appear on next fetch or via realtime subscription
+```
+
+---
+
+## Scenario 3: Replace UI Design Completely
+
+**The change:** You hire a designer and want to restyle every page — new colors, new layout, new component library (e.g., switching from shadcn to Material UI, or going fully custom).
+
+---
+
+### Difficulty by page
+
+| Page | Difficulty | Why |
+|------|-----------|-----|
+| [Landing.jsx](file:///d:/CODING/prompter/src/pages/Landing.jsx) | 🟢 Easy | Clean structure. Business logic (fetch, filter) is clearly separate from layout JSX. |
+| [Admin.jsx](file:///d:/CODING/prompter/src/pages/Admin.jsx) | 🟡 Medium | Layout is clean, but the optimistic delete+undo logic (lines 62-98) is woven into the component. You'd have to preserve that logic while rebuilding the UI. |
+| [Profile.jsx](file:///d:/CODING/prompter/src/pages/Profile.jsx) | 🟡 Medium | 427 lines. Avatar upload handler, username debounce checker, form state — all live in the same component as the JSX. Restyling means working around 200 lines of inline business logic. |
+| [Auth.jsx](file:///d:/CODING/prompter/src/pages/Auth.jsx) | 🔴 Hard | **600 lines. 300 of which are a self-contained CSS string.** This page uses an entirely separate styling system (hardcoded pixel values, hex colors, custom class names). You can't restyle this by changing Tailwind tokens — you'd need to tear out the inline CSS and rewrite the entire component. |
+| [CompleteProfile.jsx](file:///d:/CODING/prompter/src/pages/CompleteProfile.jsx) | 🔴 Hard | Same problem as Auth — 90 lines of injected CSS, its own design language, hardcoded colors. |
+| [PublicVault.jsx](file:///d:/CODING/prompter/src/pages/PublicVault.jsx) | 🟡 Medium | Clean layout, but inline Supabase queries and bulk-add logic live inside the component. |
+| [SharedVault.jsx](file:///d:/CODING/prompter/src/pages/SharedVault.jsx) | 🟡 Medium | Near-identical structure to PublicVault. These two share ~70% of the same code and should have been a shared component with different data sources. |
+| [PromptCard.jsx](file:///d:/CODING/prompter/src/components/PromptCard.jsx) | 🔴 Hard | This is the single most important visual component and also the most tangled. Redesigning this card means carefully preserving clipboard logic, usage tracking, selection mode, vault-adding, route detection, and framer-motion animations — all of which are interleaved with the layout code. |
+
+### Where architecture fails during a redesign
+
+**1. Business logic is embedded in presentation components**
+
+A well-structured app lets you rip out all JSX and replace it without touching any logic. Your app doesn't allow that. Here's what's tangled in page components:
+
+```
+Profile.jsx (427 lines)
+├── Username availability checking (lines 69-112) → business logic
+├── Image upload + WebP conversion (lines 115-179) → business logic  
+├── Form validation (lines 183-212) → business logic
+├── Avatar upload to Supabase Storage → data layer
+├── Direct Supabase query for username check → data layer
+└── JSX layout (lines 222-424) → presentation
+```
+
+To restyle Profile, you'd need to understand and preserve all of the above while replacing the JSX. If you touch the wrong line, username validation or avatar upload breaks.
+
+**Contrast with the ideal:**
+```
+useProfileForm() hook → all logic
+ProfilePage component → pure JSX that calls the hook
+```
+
+**2. Two pages that resist redesigning**
+
+Auth.jsx and CompleteProfile.jsx are essentially standalone HTML/CSS pages pasted into React. They don't use your design system at all. Redesigning them isn't "change these Tailwind classes" — it's "rewrite these 600-line components from scratch."
+
+**3. SharedVault and PublicVault are copy-pasted siblings**
+
+These two pages share: the same header layout, the same search bar, the same prompt grid, the same bulk-add footer, the same selection mode logic (identically coded). But they're two completely separate 250-line files. A redesign means doing the same visual work twice and keeping them visually in sync manually.
+
+**4. No component library abstraction**
+
+You import shadcn/Radix components directly:
+```
+@radix-ui/react-dialog
+@radix-ui/react-dropdown-menu
+@radix-ui/react-toast
+... (20+ Radix packages)
+```
+
+But the main pages barely use them. Landing, Admin, Profile — they're all raw `<input>`, `<button>`, `<div>` with Tailwind classes. The 20+ Radix dependencies in package.json are mostly unused weight. If you wanted to swap to a different component library, you'd need to audit which Radix components are actually used (likely just Toast and maybe Dialog).
+
+### Difficulty: 🟠 Hard overall
+
+**Landing page? Easy. Auth page? Rewrite from scratch. PromptCard? Surgery.**
+
+The core issue: **no custom hooks extracting logic from pages**. Your entire app has exactly **2 custom hooks** (`usePlan` and `use-mobile`). A codebase this size should have 8-10 — one per major page — separating data fetching and business logic from layout.
+
+---
+
+## Scenario 4: Scale from 100 to 10,000 Users
+
+**The change:** Your product gets traction. User count goes from double digits to five figures.
+
+---
+
+### Stage-by-stage breakdown of what breaks
+
+#### 🟢 At 100 users (today) — mostly fine
+
+Everything works because volumes are tiny. Even the inefficiencies are invisible:
+- No pagination? 100 users × 20 prompts avg = queries returning 20 rows. Fine.
+- No RLS? Nobody's trying to exploit you. Risky but not actively burning.
+- Sequential bulk adds? 3 prompts × 200ms = 600ms. Acceptable.
+
+#### 🟡 At 1,000 users — cracks appear
+
+| Problem | What happens |
+|---------|-------------|
+| **No pagination** | Power users have 200+ prompts. Landing page loads all 200, renders 200 DOM cards. Page stutters on mobile. |
+| **No RLS** | With 1,000 users, the probability someone curious opens DevTools goes from ~0% to near-certain. Your entire database is readable and writable by anyone. |
+| **`incrementUsage` race condition** | Popular prompts get copied by multiple people simultaneously. Usage counts drift from reality. |
+| **No rate limiting** | A single user (or bot) can hit your Supabase endpoint 1,000 times/second. Supabase free tier allows 500 requests/5 minutes. Your app goes down for everyone. |
+| **React Query staleTime=0** | 1,000 users × 10 navigations/session = 10,000 redundant API calls per day. |
+
+#### 🔴 At 10,000 users — structural failures
+
+| System | Failure mode | Severity |
+|--------|-------------|----------|
+| **Database queries** | `getUserPrompts()` does `SELECT * FROM prompts WHERE created_by = X ORDER BY created_at DESC` with no `.limit()`. A creator with 2,000 prompts transfers ~4MB of JSON on every page load. Multiply by concurrent users → Supabase bandwidth bill explodes. | 🔴 Critical |
+| **Supabase connection pool** | The free tier allows ~30 concurrent database connections. At 10,000 users, even 1% concurrent = 100 connections. Your app starts returning `connection refused` errors. | 🔴 Critical |
+| **Auth context initialization** | Every user's first page load calls `supabase.auth.getSession()` → `ensureProfile()` → `SELECT * FROM profiles`. That's 2 queries before anything renders. 500 users loading the app simultaneously = 1,000 database queries in seconds. | 🟡 Significant |
+| **`addPromptToVault` duplicate check** | Each add does up to 2 queries (check duplicate, then insert). Bulk-adding 10 prompts = 20 queries per user. A popular creator's vault being browsed by 100 visitors simultaneously = 2,000 queries. | 🟡 Significant |
+| **No CDN for avatars** | Avatar images are served from Supabase Storage. 10,000 profile pages loading avatars directly from Supabase Storage = bandwidth and latency issues. | 🟡 Significant |
+| **Frontend bundle size** | All pages in one bundle. First load is already likely 400-500KB+ with Framer Motion, Recharts, Three.js, React Quill, and 20+ Radix packages (most unused). On slow connections, the spinner stays for 3-5 seconds. | 🟡 Significant |
+| **No error recovery** | If `getUserPrompts()` fails (Supabase rate limit, network error), the page shows an empty state — not an error. Users think they have zero prompts. React Query retries once and gives up. No "retry" button, no error toast. | 🟡 Significant |
+
+### The complete infrastructure readiness matrix
+
+| Capability | Required at 10K | Your app today | Gap |
+|-----------|----------------|----------------|-----|
+| Row-Level Security | ✅ Mandatory | ❌ Not configured | 🔴 Security breach |
+| Pagination | ✅ Mandatory | ❌ Loads everything | 🔴 Performance wall |
+| Server-side validation | ✅ Mandatory | ❌ None | 🔴 Data integrity |
+| Rate limiting | ✅ Mandatory | ❌ None | 🔴 Denial of service |
+| Connection pooling | ✅ Mandatory | ❌ Direct connections | 🟡 Needs Supabase Pro plan + pgBouncer |
+| Code splitting | ✅ Important | ❌ Single bundle | 🟡 Slow first load |
+| Error boundaries per-page | ✅ Important | ⚠️ One global ErrorBoundary | 🟡 Single page error crashes entire app |
+| Cache strategy (staleTime) | ✅ Important | ❌ staleTime=0 | 🟡 Unnecessary API load |
+| Background jobs (tagging, analytics) | ✅ Important | ❌ No backend exists | 🔴 Can't build server features |
+| Monitoring / Alerting | ✅ Important | ❌ Only console.log | 🟡 Blind to production issues |
+| Database indexes | ✅ Important | ❓ Unknown (not visible in frontend code) | 🟡 Query performance |
+| Realtime subscriptions | Nice to have | ❌ Not used | 🟢 Not blocking |
+
+### The scaling kill chain — what fails in what order
+
+```mermaid
+graph TD
+    A[100 → 500 users] -->|"First problem"| B[No RLS = data breach risk]
+    A -->|"Visible"| C[Power users hit no-pagination wall]
+    
+    B --> D[500 → 2,000 users]
+    C --> D
+    
+    D -->|"Second wave"| E[Supabase free tier rate limits hit]
+    D -->|"Visible"| F[Bundle size makes mobile unusable]
+    D -->|"Silent"| G[Usage count drift from race conditions]
+    
+    E --> H[2,000 → 10,000 users]
+    F --> H
+    
+    H -->|"Critical"| I[Connection pool exhausted]
+    H -->|"Critical"| J[Bandwidth costs explode]
+    H -->|"Critical"| K[No monitoring = blind to failures]
+    H -->|"Architectural"| L[Can't add server features without backend]
+    
+    style B fill:#ff4444,color:#fff
+    style I fill:#ff4444,color:#fff
+    style J fill:#ff4444,color:#fff
+    style L fill:#ff4444,color:#fff
+```
+
+### Difficulty to reach 10K readiness: 🔴 Significant rework required
+
+It's not a matter of "add pagination and you're done." The missing piece is structural — **you have no backend layer at all**. Every feature that requires server-side processing (rate limiting, AI, webhooks, scheduled jobs, analytics aggregation, email notifications) is impossible to add without first building Supabase Edge Functions or a standalone API.
+
+---
+
+## Cross-Scenario Verdict
+
+| Dimension | Current state | What's missing |
+|-----------|--------------|----------------|
+| **Schema changes** | Painful — raw column names in 14+ files | Data mapper / transformation layer |
+| **New features** | Blocked — no server-side capability | Edge Functions or API backend |
+| **UI redesign** | Uneven — Landing is easy, Auth is a rewrite | Custom hooks to separate logic from layout |
+| **Scaling** | Will break at ~500 users | RLS, pagination, rate limiting, monitoring |
+
+### The single highest-leverage fix across all 4 scenarios
+
+**Custom hooks per page.** If every page had a hook that owned its data fetching, filtering, and mutation logic, then:
+- Schema changes → update the hook's mapper, UI untouched
+- New features → add to the hook, UI gets new data automatically
+- Redesign → replace JSX, hook stays identical
+- Scaling → add pagination/caching inside the hook, every page benefits
+
+```
+Today:   Page Component = fetch + filter + mutate + validate + layout (400 lines)
+Ideal:   useAdminPage() hook = fetch + filter + mutate + validate (200 lines)
+         AdminPage component = pure layout calling the hook (200 lines)
+```
+
+This one architectural change would cut the difficulty of all four scenarios by roughly half.

@@ -1,0 +1,506 @@
+# PromptVault — Deep Architectural Audit
+
+> 22 issues found. 7 High severity. 10 Medium. 5 Low.
+> Organized by category. No sugarcoating.
+
+---
+
+## 🔴 SECURITY — Things that can actually hurt you
+
+---
+
+### Issue #1: No Row-Level Security (RLS) on Supabase tables
+
+**What's happening:** Your Supabase client uses the `anon` key, which is publicly visible in your frontend JavaScript bundle. Anyone who opens DevTools can extract it. Without RLS policies on your `profiles` and `prompts` tables, **any person with that key can read, update, or delete any row in your database**. Not just their own — everyone's.
+
+**Why it's a problem:** A mildly curious user can open the browser console, copy your Supabase URL and anon key, and run:
+```js
+// Deletes EVERY prompt in your database
+supabase.from('prompts').delete().neq('id', '');
+```
+
+**Severity:** 🔴 **HIGH — this is a production data breach waiting to happen**
+
+**Fix:** Enable RLS on both tables in Supabase Dashboard → Authentication → Policies. At minimum:
+```sql
+-- prompts: users can only touch their own rows
+ALTER TABLE prompts ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users manage own prompts" ON prompts
+  USING (created_by = auth.uid())
+  WITH CHECK (created_by = auth.uid());
+
+-- Allow reading public prompts for anyone
+CREATE POLICY "Anyone can read public prompts" ON prompts
+  FOR SELECT USING (is_public = true);
+
+-- profiles: users can update only their own
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users manage own profile" ON profiles
+  USING (id = auth.uid())
+  WITH CHECK (id = auth.uid());
+
+-- Allow reading profiles by anyone (for public vault pages)
+CREATE POLICY "Anyone can read profiles" ON profiles
+  FOR SELECT USING (true);
+```
+
+---
+
+### Issue #2: No server-side input validation
+
+**What's happening:** Prompt creation ([promptService.js:120-143](file:///d:/CODING/prompter/src/services/promptService.js#L120-L143)) validates nothing. No length limits, no sanitization, no type checking. A user can insert a 10MB string as the prompt body via a crafted request.
+
+**Why it's a problem:** Without RLS (Issue #1), this is wide open. Even with RLS, there's no database-level check constraint preventing garbage data, extremely long text, or injection content.
+
+**Severity:** 🔴 **HIGH**
+
+**Fix:** Add PostgreSQL constraints on the table:
+```sql
+ALTER TABLE prompts ADD CONSTRAINT prompts_name_length CHECK (char_length(name) <= 200);
+ALTER TABLE prompts ADD CONSTRAINT prompts_body_length CHECK (char_length(body) <= 10000);
+```
+Optionally add a Supabase Edge Function for sanitization if you need stricter control.
+
+---
+
+### Issue #3: `incrementUsage` has a race condition
+
+**What's happening:** In [promptService.js:165-189](file:///d:/CODING/prompter/src/services/promptService.js#L165-L189), usage count is incremented by fetching the current value, adding 1 client-side, then writing it back. If two people copy the same prompt at the same time, one increment gets lost.
+
+**Why it's a problem:** With 100 users, you'll lose ~5-10% of usage counts silently. The code itself even acknowledges this with the comment *"For high concurrency, it is recommended to use a Supabase RPC later."*
+
+**Severity:** 🟡 **MEDIUM** (data accuracy, not a crash)
+
+**Fix:** Create a Supabase RPC function:
+```sql
+CREATE OR REPLACE FUNCTION increment_usage(prompt_id UUID)
+RETURNS void AS $$
+  UPDATE prompts SET usage_count = usage_count + 1 WHERE id = prompt_id;
+$$ LANGUAGE sql;
+```
+Then call it: `supabase.rpc('increment_usage', { prompt_id: promptId })`
+
+---
+
+### Issue #4: SharedVault exposes ALL prompts (not just public)
+
+**What's happening:** In [SharedVault.jsx:73-86](file:///d:/CODING/prompter/src/pages/SharedVault.jsx#L73-L86), the query fetches **all** prompts by `created_by` with no `is_public` filter. Compare this to PublicVault which correctly filters `.eq('is_public', true)`.
+
+**Why it's a problem:** If a user shares their vault link (`/vault/username`), visitors can see prompts the owner intended to keep private. This is a **privacy leak**.
+
+**Severity:** 🔴 **HIGH**
+
+**Fix:** Add the public filter — unless SharedVault is intentionally meant to show everything (in which case, make that explicit in the UI):
+```js
+// SharedVault.jsx line 79 — add filter
+.eq('created_by', profile.id)
+.eq('is_public', true)  // ← add this
+```
+
+---
+
+### Issue #5: `authError` state is set but never triggered
+
+**What's happening:** In [AuthContext.jsx:16](file:///d:/CODING/prompter/src/lib/AuthContext.jsx#L16), `authError` is initialized as state and exposed in the context. [App.jsx:68-76](file:///d:/CODING/prompter/src/App.jsx#L68-L76) checks for `authError.type === 'user_not_registered'`. But **nothing in the codebase ever calls `setAuthError()`**. The error handling in `handleAuthenticatedUser` only does `console.error`.
+
+**Why it's a problem:** The `UserNotRegisteredError` component is dead code — it can never be shown. If `ensureProfile` fails (e.g., database down), users get silently stuck on a loading screen.
+
+**Severity:** 🟡 **MEDIUM**
+
+**Fix:** In `handleAuthenticatedUser`, set the error state on failure:
+```js
+} catch (err) {
+  console.error("AUTH HANDLER ERROR:", err);
+  setAuthError({ type: 'auth_error', message: err.message });
+}
+```
+
+---
+
+## 🏗️ SCALABILITY — Things that break when you grow
+
+---
+
+### Issue #6: No pagination anywhere
+
+**What's happening:** `getUserPrompts()` fetches every single prompt the user has ever created in one query. `Landing.jsx`, `Admin.jsx`, `SharedVault.jsx`, `PublicVault.jsx` — all render the full array. A creator with 500 prompts loads all 500 into memory, renders all 500 DOM elements, and transfers all 500 rows from Supabase on every page visit.
+
+**Why it's a problem:** At 100 prompts, it's already sluggish. At 500+, the page will stutter. At 1000+, you'll get browser memory warnings and users will leave. Supabase also has default result limits (1000 rows).
+
+**Severity:** 🔴 **HIGH**
+
+**Fix:** Add `.range(from, to)` to your Supabase queries and implement cursor-based or offset pagination. For the UI, use virtual scrolling (e.g., `@tanstack/react-virtual`) or a simple "Load More" button.
+
+---
+
+### Issue #7: Bulk add sends sequential requests
+
+**What's happening:** In both [PublicVault.jsx:37-41](file:///d:/CODING/prompter/src/pages/PublicVault.jsx#L37-L41) and [SharedVault.jsx:37-41](file:///d:/CODING/prompter/src/pages/SharedVault.jsx#L37-L41):
+```js
+for (const prompt of selected) {
+  await addPromptToVault({...}); // One at a time, waiting for each
+}
+```
+If a user selects 20 prompts and each takes 200ms, that's a **4-second wait** with a spinner. And if prompt #15 fails, the first 14 are already committed with no rollback.
+
+**Why it's a problem:** Terrible UX at scale. Users will think the app is frozen. Partial failures leave data in an inconsistent state.
+
+**Severity:** 🟡 **MEDIUM**
+
+**Fix:** Use `Promise.allSettled()` for parallel execution:
+```js
+const results = await Promise.allSettled(
+  selected.map(prompt => addPromptToVault({ ...prompt, attribution_username: username }))
+);
+const failures = results.filter(r => r.status === 'rejected');
+```
+Or better — use a single Supabase `.insert([...array])` call.
+
+---
+
+### Issue #8: React Query has no `staleTime` configured
+
+**What's happening:** In [query-client.js](file:///d:/CODING/prompter/src/lib/query-client.js), the global config sets `refetchOnWindowFocus: false` and `retry: 1`, but no `staleTime`. The default `staleTime` is **0 milliseconds** — meaning React Query considers data stale immediately and refetches on every component mount.
+
+**Why it's a problem:** Navigate from Landing → Admin → back to Landing? That's 3 fetches of the same prompt list in 10 seconds. Wasteful network calls, unnecessary loading spinners.
+
+**Severity:** 🟡 **MEDIUM**
+
+**Fix:**
+```js
+export const queryClientInstance = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      retry: 1,
+      staleTime: 1000 * 60 * 2, // 2 minutes
+    },
+  },
+});
+```
+
+---
+
+### Issue #9: No code splitting — the entire app loads upfront
+
+**What's happening:** All 8 pages are statically imported at the top of [App.jsx](file:///d:/CODING/prompter/src/App.jsx#L8-L15). This means the Auth page, Admin page, PublicVault page, and everything else is bundled into a single JavaScript file. A visitor hitting your landing page downloads code for every page, including ones they'll never see.
+
+**Why it's a problem:** Larger initial bundle = slower load time. As you add more pages and features, this gets linearly worse.
+
+**Severity:** 🟢 **LOW** (your app is still small enough that this isn't painful yet)
+
+**Fix:** Use React.lazy:
+```jsx
+const Admin = React.lazy(() => import('./pages/Admin'));
+const Profile = React.lazy(() => import('./pages/Profile'));
+// ... wrap Routes in <Suspense fallback={<Spinner />}>
+```
+
+---
+
+## 🧱 ARCHITECTURE — Structural rot that makes changes risky
+
+---
+
+### Issue #10: Dead legacy data layer is still shipping
+
+**What's happening:** [storageService.js](file:///d:/CODING/prompter/src/services/storageService.js) is a complete localStorage-based "fake database" with users, prompts, and sessions. The top half of [promptService.js:7-116](file:///d:/CODING/prompter/src/services/promptService.js#L7-L116) is a full CRUD layer built on top of it. None of this is used by any active UI path — the UI calls the Supabase functions exported below.
+
+But [AdminPromptForm.jsx:28](file:///d:/CODING/prompter/src/components/admin/AdminPromptForm.jsx#L28) still calls `promptService.updatePrompt()` for edits — **which writes to localStorage, not Supabase**. This means **editing a prompt doesn't actually update the database**.
+
+**Why it's a problem:** Editing is silently broken in production. A user clicks "Update Prompt," sees a success state, but the change goes to localStorage and is lost on page reload. Also, 200+ lines of dead code confuse anyone reading the codebase.
+
+**Severity:** 🔴 **HIGH — editing prompts is broken**
+
+**Fix:** 
+1. Create a Supabase-backed `updatePrompt` function
+2. Delete `storageService.js` entirely
+3. Delete the top half of `promptService.js` (lines 1-116)
+
+---
+
+### Issue #11: React hooks called conditionally (Rules of Hooks violation)
+
+**What's happening:** In [Admin.jsx](file:///d:/CODING/prompter/src/pages/Admin.jsx#L25-L29), [Landing.jsx](file:///d:/CODING/prompter/src/pages/Landing.jsx#L27-L31), and [Profile.jsx](file:///d:/CODING/prompter/src/pages/Profile.jsx#L22-L26), there's an early return *before* hooks are called:
+
+```jsx
+// Admin.jsx
+if (isLoadingAuth) {
+  return <div />; // ← EARLY RETURN HERE
+}
+const { canShareVault } = usePlan(); // ← HOOK AFTER EARLY RETURN
+const [search, setSearch] = useState(''); // ← MORE HOOKS
+```
+
+**Why it's a problem:** This violates React's Rules of Hooks. React requires hooks to be called in the exact same order on every render. An early return before hooks means they're conditionally skipped. React will throw errors or silently break in production. This is a live bug that you haven't hit yet by luck.
+
+**Severity:** 🔴 **HIGH — ticking time bomb**
+
+**Fix:** Move ALL hooks to the top of the component, BEFORE any conditional returns:
+```jsx
+export default function Admin() {
+  const { user, isAuthenticated, isLoadingAuth } = useAuth();
+  const { canShareVault, planInfo } = usePlan(); // ← BEFORE early return
+  const [search, setSearch] = useState('');       // ← BEFORE early return
+  // ... all other hooks
+
+  if (isLoadingAuth) return <div />;
+  // ... rest of component
+}
+```
+
+---
+
+### Issue #12: Auth guards are duplicated with subtle differences across 3 pages
+
+**What's happening:**
+- [Landing.jsx:21-25](file:///d:/CODING/prompter/src/pages/Landing.jsx#L21-L25): `useEffect` → `navigate('/auth', { replace: true })`
+- [Admin.jsx:19-23](file:///d:/CODING/prompter/src/pages/Admin.jsx#L19-L23): `useEffect` → `navigate('/auth', { replace: true })`
+- [Profile.jsx:16-20](file:///d:/CODING/prompter/src/pages/Profile.jsx#L16-L20): `useEffect` → `navigate('/auth', { replace: true })`
+- [AuthContext.jsx:45-47](file:///d:/CODING/prompter/src/lib/AuthContext.jsx#L45-L47): `onAuthStateChange` → `navigate('/auth')`
+- [App.jsx:71-74](file:///d:/CODING/prompter/src/App.jsx#L71-L74): Error handler → `navigateToLogin()`
+
+That's **5 places** where "redirect to login if not authenticated" is implemented, each with slightly different logic.
+
+**Why it's a problem:** If you change the login URL from `/auth` to `/login`, you have to find and update 5 different files. Miss one and users hit a broken redirect.
+
+**Severity:** 🟡 **MEDIUM**
+
+**Fix:** Create a `<ProtectedRoute />` wrapper and use it in App.jsx. Remove all per-page auth guards.
+
+---
+
+### Issue #13: Two completely separate styling systems
+
+**What's happening:** Every page uses **TailwindCSS** via className utilities — except [Auth.jsx](file:///d:/CODING/prompter/src/pages/Auth.jsx#L35-L330) and [CompleteProfile.jsx](file:///d:/CODING/prompter/src/pages/CompleteProfile.jsx#L5-L89) which inject raw `<style>` tags into the document head with 300+ lines of hardcoded CSS using pixel values and hex colors.
+
+**Why it's a problem:**
+- Your Tailwind theme tokens (colors, spacing, fonts) don't apply to Auth/CompleteProfile
+- If you switch to dark mode, those two pages stay white
+- Two styling systems = two mental models = double the maintenance
+- The injected `<style>` never gets cleaned up (the cleanup function is empty)
+
+**Severity:** 🟡 **MEDIUM**
+
+**Fix:** Rewrite Auth.jsx and CompleteProfile.jsx to use Tailwind classes like every other page. Delete the inline style strings.
+
+---
+
+### Issue #14: Pages bypass the service layer to call Supabase directly
+
+**What's happening:**
+- [Profile.jsx:94-99](file:///d:/CODING/prompter/src/pages/Profile.jsx#L94-L99): Direct `supabase.from('profiles').select()` for username check
+- [Profile.jsx:148-153](file:///d:/CODING/prompter/src/pages/Profile.jsx#L148-L153): Direct `supabase.storage.from('avatars').upload()`
+- [PublicVault.jsx:63-68](file:///d:/CODING/prompter/src/pages/PublicVault.jsx#L63-L68): Direct `supabase.from('profiles').select()`
+- [SharedVault.jsx:63-68](file:///d:/CODING/prompter/src/pages/SharedVault.jsx#L63-L68): Direct `supabase.from('profiles').select()`
+- [AdminPromptRow.jsx:16-19](file:///d:/CODING/prompter/src/components/admin/AdminPromptRow.jsx#L16-L19): Direct `supabase.from('prompts').update()`
+
+You built a service layer (`authService`, `promptService`) but then bypass it whenever it's inconvenient.
+
+**Why it's a problem:** If you ever add caching, audit logging, error normalization, or migrate away from Supabase — you have to track down every direct call scattered across page components. The service layer becomes a lie.
+
+**Severity:** 🟡 **MEDIUM**
+
+**Fix:** Move every `supabase.from(...)` call into the appropriate service file. Add functions like `authService.checkUsernameAvailable(username)`, `authService.uploadAvatar(userId, blob)`, `promptService.togglePublic(promptId)`.
+
+---
+
+### Issue #15: `app-params.js` and `createPageUrl` are dead code
+
+**What's happening:**
+- [app-params.js](file:///d:/CODING/prompter/src/lib/app-params.js) exports an empty object `{}` and creates a fake localStorage Map for Node (which never runs in your Vite SPA).
+- [utils/index.ts](file:///d:/CODING/prompter/src/utils/index.ts) exports `createPageUrl` (as TypeScript!) which is only imported in [Admin.jsx:11](file:///d:/CODING/prompter/src/pages/Admin.jsx#L11) but **never called**.
+
+**Why it's a problem:** Dead code confused me during the audit. It'll confuse you and any future collaborator. Also: a `.ts` file in a `.jsx` project is inconsistent.
+
+**Severity:** 🟢 **LOW**
+
+**Fix:** Delete both files. Remove the unused import in Admin.jsx.
+
+---
+
+## 🔧 MAINTAINABILITY — Things that make your life harder over time
+
+---
+
+### Issue #16: `PromptCard` is a 205-line god component
+
+**What's happening:** [PromptCard.jsx](file:///d:/CODING/prompter/src/components/PromptCard.jsx) handles:
+1. Clipboard copying
+2. Usage tracking (with optimistic cache updates)
+3. "Add to Vault" functionality (with auth redirect)
+4. Selection mode (checkbox toggling)
+5. Route detection to change behavior (checks if on `/public/` or `/vault/`)
+6. Reduced motion media query
+7. Attribution display and navigation
+8. Hover and copy animations
+
+**Why it's a problem:** Want to change how "Add to Vault" works? You're editing the same file as the clipboard logic and the selection logic. One mistake and all three break. This component is untestable in isolation because it depends on React Router, React Query, AuthContext, authService, promptService, and feature flags simultaneously.
+
+**Severity:** 🟡 **MEDIUM**
+
+**Fix:** Extract into focused components: `<CopyableCard>`, `<VaultAddButton>`, `<SelectionCheckbox>`. Pass behaviors as props.
+
+---
+
+### Issue #17: Username validation regex is defined in 3 different places
+
+**What's happening:**
+- [Profile.jsx:72](file:///d:/CODING/prompter/src/pages/Profile.jsx#L72): `const regex = /^[a-z0-9_]{3,20}$/;`
+- [Profile.jsx:188](file:///d:/CODING/prompter/src/pages/Profile.jsx#L188): `const regex = /^[a-z0-9_]{3,20}$/;` (same regex, defined again on submit)
+- [CompleteProfile.jsx:145](file:///d:/CODING/prompter/src/pages/CompleteProfile.jsx#L145): `const regex = /^[a-z0-9_]{3,20}$/;`
+
+Three copies of the same regex. The error messages are also worded differently between the two pages.
+
+**Why it's a problem:** If the business requirement changes to allow hyphens or increase the max length, you have to find and update 3 regex copies and make sure the error messages match. You will forget one.
+
+**Severity:** 🟡 **MEDIUM**
+
+**Fix:** Add to `authService.js`:
+```js
+export const USERNAME_REGEX = /^[a-z0-9_]{3,20}$/;
+export const USERNAME_RULES = '3–20 chars, lowercase letters, numbers, underscores only';
+```
+
+---
+
+### Issue #18: `PageNotFound` calls `authService.getCurrentUser()` without `await`
+
+**What's happening:** In [PageNotFound.jsx:13](file:///d:/CODING/prompter/src/lib/PageNotFound.jsx#L13):
+```js
+const user = authService.getCurrentUser(); // ← this returns a Promise
+return { user, isAuthenticated: !!user };  // ← user is always a Promise (truthy)
+```
+`getCurrentUser()` is `async` — it returns a Promise. Without `await`, `user` is always a Promise object, which is always truthy, which means `isAuthenticated` is always `true`.
+
+**Why it's a problem:** The "Admin Note" section always shows for every user, regardless of whether they're actually authenticated or an admin. It's a logic bug.
+
+**Severity:** 🟢 **LOW** (it's just the 404 page, not critical)
+
+**Fix:** Add `await`:
+```js
+const user = await authService.getCurrentUser();
+```
+
+---
+
+### Issue #19: `console.log` statements throughout production code
+
+**What's happening:** I count 20+ `console.log`/`console.warn`/`console.error` calls across the codebase. Examples:
+- [App.jsx:96](file:///d:/CODING/prompter/src/App.jsx#L96): `console.log("APP RENDERED")`
+- [AuthContext.jsx:36](file:///d:/CODING/prompter/src/lib/AuthContext.jsx#L36): `console.log("AUTH EVENT:", event)`
+- [Admin.jsx:125](file:///d:/CODING/prompter/src/pages/Admin.jsx#L125): `console.log("COPYING VAULT:", url)`
+- [authService.js:38](file:///d:/CODING/prompter/src/services/authService.js#L38): `console.log("[ensureProfile] START", user.id)`
+
+**Why it's a problem:** Users can see all of this in their browser console. It's unprofessional, leaks internal state, and makes real errors harder to spot in a sea of debug noise.
+
+**Severity:** 🟢 **LOW**
+
+**Fix:** Remove all `console.log` and `console.warn` calls. Keep `console.error` for genuine errors only, or replace with a proper logging utility that respects `NODE_ENV`.
+
+---
+
+### Issue #20: Delete modal in `AdminPromptRow` has hardcoded white background
+
+**What's happening:** In [AdminPromptRow.jsx:101](file:///d:/CODING/prompter/src/components/admin/AdminPromptRow.jsx#L101):
+```html
+<div className="bg-white border border-border p-6 w-[320px]">
+```
+This is `bg-white` instead of `bg-background`. If you ever implement dark mode, this modal will be a glaring white box on a dark page.
+
+**Severity:** 🟢 **LOW**
+
+**Fix:** Change `bg-white` to `bg-background` and ensure text uses `text-foreground`.
+
+---
+
+## ⚡ PERFORMANCE — Things that are slower than they should be
+
+---
+
+### Issue #21: `PromptCard` calls `authService.getCurrentUser()` on every single copy action
+
+**What's happening:** In [PromptCard.jsx:85](file:///d:/CODING/prompter/src/components/PromptCard.jsx#L85), every time a user copies a prompt:
+```js
+const user = await authService.getCurrentUser();
+```
+This calls `supabase.auth.getSession()` followed by `ensureProfile()` — which does a full database roundtrip to fetch the profile. Every. Single. Copy.
+
+**Why it's a problem:** Copying a prompt should be instant. Instead, there's a hidden network request to fetch user data you *already have* in AuthContext. If the user copies 10 prompts quickly, that's 10 Supabase queries firing in the background.
+
+**Severity:** 🟡 **MEDIUM**
+
+**Fix:** Use the `user` object already in AuthContext:
+```jsx
+const { user } = useAuth();
+// In handleCopy:
+if (user && prompt.created_by === user.id && isOwnVault) {
+  await incrementUsage(prompt.id);
+}
+```
+
+---
+
+### Issue #22: AuthContext's `finally` block has a 2-second artificial delay
+
+**What's happening:** In [AuthContext.jsx:91-93](file:///d:/CODING/prompter/src/lib/AuthContext.jsx#L91-L93):
+```js
+} finally {
+  setTimeout(() => {
+    setIsLoadingAuth(false);
+  }, 2000);
+}
+```
+After authentication completes (successfully or not), there's a **hardcoded 2-second delay** before the loading spinner disappears. This was likely added to "fix" a race condition by slowing things down.
+
+**Why it's a problem:** Every user waits an extra 2 seconds staring at a spinner after they're already authenticated. That's a direct UX penalty. If `handleAuthenticatedUser` is called twice (which it can be — once from `init()` and once from `onAuthStateChange`), you get overlapping timeouts.
+
+**Severity:** 🟡 **MEDIUM**
+
+**Fix:** Remove the `setTimeout`. If there's a race condition, fix the race condition — don't mask it with a delay. The `setIsLoadingAuth(false)` on line 68 already handles the happy path.
+
+---
+
+## Summary Matrix
+
+| # | Issue | Category | Severity | Effort to Fix |
+|---|-------|----------|----------|---------------|
+| 1 | No RLS on database tables | Security | 🔴 HIGH | 30 min |
+| 2 | No server-side input validation | Security | 🔴 HIGH | 15 min |
+| 3 | `incrementUsage` race condition | Security | 🟡 MEDIUM | 15 min |
+| 4 | SharedVault leaks private prompts | Security | 🔴 HIGH | 2 min |
+| 5 | `authError` never set, error UX broken | Security | 🟡 MEDIUM | 10 min |
+| 6 | No pagination anywhere | Scalability | 🔴 HIGH | 2-4 hrs |
+| 7 | Sequential bulk add operations | Scalability | 🟡 MEDIUM | 20 min |
+| 8 | No `staleTime` on React Query | Scalability | 🟡 MEDIUM | 2 min |
+| 9 | No code splitting | Scalability | 🟢 LOW | 15 min |
+| 10 | Legacy dead code + broken edit flow | Architecture | 🔴 HIGH | 1-2 hrs |
+| 11 | Hooks called after conditional return | Architecture | 🔴 HIGH | 30 min |
+| 12 | Auth guards duplicated 5 ways | Architecture | 🟡 MEDIUM | 1 hr |
+| 13 | Dual styling systems (Tailwind + raw CSS) | Architecture | 🟡 MEDIUM | 2-3 hrs |
+| 14 | Service layer bypassed in 5 places | Architecture | 🟡 MEDIUM | 1 hr |
+| 15 | Dead code: app-params, createPageUrl | Architecture | 🟢 LOW | 5 min |
+| 16 | PromptCard is a god component | Maintainability | 🟡 MEDIUM | 2 hrs |
+| 17 | Username regex defined 3 times | Maintainability | 🟡 MEDIUM | 10 min |
+| 18 | Missing `await` in PageNotFound | Maintainability | 🟢 LOW | 1 min |
+| 19 | Console logs in production code | Maintainability | 🟢 LOW | 15 min |
+| 20 | Hardcoded `bg-white` in delete modal | Maintainability | 🟢 LOW | 1 min |
+| 21 | Redundant auth call on every prompt copy | Performance | 🟡 MEDIUM | 10 min |
+| 22 | Artificial 2-second loading delay | Performance | 🟡 MEDIUM | 5 min |
+
+---
+
+## Recommended Fix Order
+
+> Prioritized by: **risk × ease of fix**. Quick wins first.
+
+1. **#4** — Add `is_public` filter to SharedVault *(2 min, fixes privacy leak)*
+2. **#1** — Enable RLS policies *(30 min, fixes data security)*
+3. **#11** — Fix hooks-after-early-return in Admin/Landing/Profile *(30 min, fixes React violation)*
+4. **#10** — Delete dead localStorage code + build Supabase `updatePrompt` *(1 hr, fixes broken editing)*
+5. **#22** — Remove the 2-second `setTimeout` delay *(5 min, instant UX improvement)*
+6. **#8** — Add `staleTime` to React Query config *(2 min, reduces network waste)*
+7. **#2** — Add database constraints *(15 min, prevents garbage data)*
+8. **#3** — Replace `incrementUsage` with RPC *(15 min, fixes race condition)*
+9. **#21** — Use AuthContext user instead of fetching on every copy *(10 min, faster UX)*
+10. Everything else in order of severity.

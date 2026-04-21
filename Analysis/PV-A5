@@ -1,0 +1,686 @@
+# PromptVault — Real-World Failure Audit
+
+> 28 failure scenarios tested against your actual code.
+> Each one: what triggers it, what happens, and how to fix it.
+
+---
+
+## Category 1: API / Network Failures
+
+*What happens when the internet hiccups, Supabase goes down, or a request times out?*
+
+---
+
+### 💥 Failure #1: Supabase is down when app loads
+
+**Trigger:** User opens app. Supabase is unreachable (outage, DNS issue, bad Wi-Fi).
+
+**What happens — step by step:**
+1. [AuthContext.jsx:21](file:///d:/CODING/prompter/src/lib/AuthContext.jsx#L21) — `supabase.auth.getSession()` throws or hangs
+2. The `init()` function has no try/catch around `getSession()`, only around `handleAuthenticatedUser`
+3. The Promise rejects. Nobody catches it.
+4. `setIsLoadingAuth(false)` on line 26 **never runs**
+5. The user sees an **infinite loading spinner forever**
+
+**Type:** 🔴 **Silent Failure → Permanent hang**
+
+**Fix:**
+```js
+// AuthContext.jsx — wrap init in try/catch
+const init = async () => {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.user) {
+      await handleAuthenticatedUser(session.user);
+    } else {
+      setIsLoadingAuth(false);
+    }
+  } catch (err) {
+    console.error("Session check failed:", err);
+    setIsLoadingAuth(false); // ← unblock the UI
+    setAuthError({ type: 'network_error', message: 'Could not connect to server' });
+  }
+};
+```
+
+---
+
+### 💥 Failure #2: Profile fetch fails during login
+
+**Trigger:** User logs in successfully, but the `profiles` table query fails (RLS issue, table locked, network drop).
+
+**What happens:**
+1. [AuthContext.jsx:64](file:///d:/CODING/prompter/src/lib/AuthContext.jsx#L64) — `authService.ensureProfile(user)` starts
+2. [authService.js:50-54](file:///d:/CODING/prompter/src/services/authService.js#L50-L54) — `supabase.from('profiles').select('*')` fails
+3. `ensureProfile` catches the error, logs it, returns `null`
+4. Back in AuthContext line 72: `if (profile)` — profile is null, so user state stays as the raw Supabase auth object
+5. `user.plan` is **undefined** → `usePlan()` defaults to `'FREE'`
+6. `user.username` is **undefined** → sharing features silently break, vault links go to `/vault/undefined`
+
+**Type:** 🟡 **Silent Failure — app works but with wrong data**
+
+**Fix:** Set an explicit error state when profile is null:
+```js
+const profile = await profilePromise;
+if (profile) {
+  setUser({ ...user, ...profile });
+} else {
+  // Profile fetch failed — user object is incomplete
+  setAuthError({ type: 'profile_error', message: 'Could not load profile' });
+}
+```
+
+---
+
+### 💥 Failure #3: Prompt list fetch fails
+
+**Trigger:** Landing or Admin page loads, but `getUserPrompts()` throws (network error, Supabase rate limit).
+
+**What happens:**
+1. [Landing.jsx:42-50](file:///d:/CODING/prompter/src/pages/Landing.jsx#L42-L50) — the `queryFn` catches the error and returns `[]`
+2. React Query receives an empty array as a "success"
+3. The UI shows **"No prompts yet. LET'S START →"** — the empty-state screen
+4. The user thinks they have zero prompts. They panic.
+
+**Type:** 🟡 **Silent Failure — error disguised as empty state**
+
+The issue is in the catch block:
+```js
+} catch (err) {
+  console.error("Fetch landing prompts error:", err);
+  return []; // ← error becomes empty success
+}
+```
+
+**Fix:** Let the error propagate so React Query knows it failed:
+```js
+queryFn: async () => {
+  const data = await getUserPrompts(); // Let it throw!
+  return data;
+},
+// Add to query config:
+meta: { errorMessage: 'Failed to load prompts' }
+```
+Then show an error state instead of empty state:
+```jsx
+const { data: prompts = [], isLoading, isError } = useQuery({...});
+// In JSX:
+{isError ? <ErrorState message="Could not load prompts. Tap to retry." onRetry={refetch} /> : ...}
+```
+
+---
+
+### 💥 Failure #4: Delete fails AFTER the undo window expires
+
+**Trigger:** User deletes a prompt. The 5-second undo window passes. The actual `deletePrompt()` API call fails.
+
+**What happens:**
+1. [Admin.jsx:67-69](file:///d:/CODING/prompter/src/pages/Admin.jsx#L67-L69) — prompt is immediately removed from UI (optimistic)
+2. Undo timer starts (5 seconds)
+3. Timer fires → [Admin.jsx:74](file:///d:/CODING/prompter/src/pages/Admin.jsx#L74) — `await deletePrompt(prompt.id)` fails
+4. The catch block logs the error: `console.error(err)`
+5. `setDeletedPrompt(null)` runs in `finally` — the undo toast disappears
+6. The prompt is **gone from the UI** but **still exists in the database**
+7. On next page refresh, the prompt reappears like a ghost
+
+**Type:** 🟡 **Silent Failure — data desync between UI and database**
+
+**Fix:** On failure, restore the prompt to the cache:
+```js
+const timeout = setTimeout(async () => {
+  try {
+    await deletePrompt(prompt.id);
+  } catch (err) {
+    console.error(err);
+    // Restore the prompt since deletion failed
+    queryClient.setQueryData(['admin-prompts'], (old) => {
+      return [prompt, ...(old || [])].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    });
+    // Tell the user
+    toast({ title: "Delete failed", description: "Prompt has been restored." });
+  } finally {
+    setDeletedPrompt(null);
+  }
+}, 5000);
+```
+
+---
+
+### 💥 Failure #5: Usage increment fails on prompt copy
+
+**Trigger:** User copies a prompt. `incrementUsage()` fails (network error).
+
+**What happens:**
+1. [PromptCard.jsx:74-78](file:///d:/CODING/prompter/src/components/PromptCard.jsx#L74-L78) — clipboard write succeeds, user sees "Copied"
+2. [PromptCard.jsx:90-96](file:///d:/CODING/prompter/src/components/PromptCard.jsx#L90-L96) — optimistic cache update runs, usage count shows +1
+3. [PromptCard.jsx:98](file:///d:/CODING/prompter/src/components/PromptCard.jsx#L98) — `await incrementUsage(prompt.id)` throws
+4. Error is caught and logged. Cache is NOT rolled back.
+5. Usage count shows +1 in UI but database still has the old value
+6. On page refresh, the count drops back down
+
+**Type:** 🟢 **Silent Failure — cosmetic mismatch, self-corrects on refresh**
+
+**Fix:** This one is acceptable. Usage counts are non-critical. But if you want correctness, roll back the cache on error or don't do optimistic updates for usage — just let it update on next query refresh.
+
+---
+
+### 💥 Failure #6: Avatar upload fails midway
+
+**Trigger:** User selects an image, WebP conversion succeeds, but Supabase Storage upload fails (file too large, bucket full, network drop).
+
+**What happens:**
+1. [Profile.jsx:148-153](file:///d:/CODING/prompter/src/pages/Profile.jsx#L148-L153) — `supabase.storage.from('avatars').upload()` throws
+2. Catch block: `alert('Failed to upload avatar.')`
+3. User sees a browser `alert()` popup — the ugliest possible error UX
+4. `setUploadingAvatar(false)` runs in finally
+5. The avatar preview **does NOT revert** — `setFormData` was called on line 162 before the upload. Wait, no — the upload happens before the profile update on line 165. Let me re-read...
+
+Actually the code flow is:
+1. Canvas converts to blob
+2. Upload blob to Supabase Storage
+3. Get public URL
+4. Set local form state (line 162) 
+5. Update profile in DB (line 165)
+
+If step 2 fails, steps 3-5 don't run. The avatar preview stays unchanged. ✓ That's correct.
+
+But step 4 and 5 have no error handling between them. If step 4 succeeds but step 5 fails, the UI shows the new avatar but the database has the old URL.
+
+**Type:** 🟡 **Bad UX — native `alert()` popup for a common failure**
+
+**Fix:** Replace `alert()` with your Toaster component:
+```js
+} catch (err) {
+  console.error(err);
+  toast({ title: "Upload failed", description: "Please try again with a smaller image.", variant: "destructive" });
+}
+```
+
+---
+
+### 💥 Failure #7: Google OAuth popup blocked or cancelled
+
+**Trigger:** User clicks "Continue with Google." Browser blocks the popup, or user closes it.
+
+**What happens:**
+1. [Auth.jsx:414-421](file:///d:/CODING/prompter/src/pages/Auth.jsx#L414-L421) — `authService.loginWithGoogle()` throws
+2. Catch block: `console.error(err)` then `setLoading(false)`
+3. No error message shown to user
+4. Button stops showing "LOADING..." and goes back to normal
+5. User has **zero feedback** about what went wrong
+
+**Type:** 🟡 **Bad UX — silent failure with no feedback**
+
+**Fix:**
+```js
+} catch (err) {
+  console.error(err);
+  setErrors({ email: 'Google sign-in was cancelled or blocked by your browser.' });
+  setLoading(false);
+}
+```
+
+---
+
+### 💥 Failure #8: Toggle public/private fails on AdminPromptRow
+
+**Trigger:** User clicks the PUBLIC/PRIVATE toggle. Supabase update fails.
+
+**What happens:**
+1. [AdminPromptRow.jsx:16-19](file:///d:/CODING/prompter/src/components/admin/AdminPromptRow.jsx#L16-L19) — direct `supabase.from('prompts').update()` call
+2. If it fails, catch block logs error: `console.error("Toggle public error:", err)`
+3. No UI feedback. The button visually doesn't change (since there's no optimistic update here — good)
+4. But user clicks again, and again, thinking it's not working
+
+**Type:** 🟡 **Bad UX — no error feedback**
+
+**Fix:** Add a toast or inline error indicator.
+
+---
+
+## Category 2: Invalid / Malicious Input
+
+*What happens when someone types garbage, injects scripts, or feeds your app unexpected data?*
+
+---
+
+### 💥 Failure #9: XSS injection in prompt body
+
+**Trigger:** User creates a prompt with body: `<script>alert('hacked')</script><img src=x onerror=alert('xss')>`
+
+**What happens:**
+1. The content is saved to Supabase as-is (no sanitization)
+2. When rendering, [PromptCard.jsx:139](file:///d:/CODING/prompter/src/components/PromptCard.jsx#L139) renders it inside `{prompt.body}`
+3. Because React auto-escapes JSX expressions, the `<script>` tags are rendered as **plain text**, not executed
+4. **React protects you here.** ✅ No XSS.
+
+**BUT** — there's one risk. If anywhere in your app you use `dangerouslySetInnerHTML` or pass prompt data to `react-markdown` (which is in your dependencies), raw HTML could execute.
+
+**Type:** 🟢 **Currently safe — but fragile**
+
+**Fix:** You're fine as long as you never use `dangerouslySetInnerHTML` with user content. Add a note/rule for future reference. If you ever render markdown from user prompts, sanitize with DOMPurify.
+
+---
+
+### 💥 Failure #10: Empty string submitted as prompt name
+
+**Trigger:** User clears the prompt name field and submits.
+
+**What happens:**
+1. [AdminPromptForm.jsx:21](file:///d:/CODING/prompter/src/components/admin/AdminPromptForm.jsx#L21) — `if (!name.trim() || !body.trim()) return;` — **blocked**. ✅ Good.
+2. But the HTML `required` attribute on line 73 would also prevent submission at the browser level
+3. However: a savvy user can bypass the UI and call `createPrompt({ name: '', body: '' })` directly via console
+4. [promptService.js:127](file:///d:/CODING/prompter/src/services/promptService.js#L127) — no validation. The empty string goes straight to Supabase.
+5. A prompt with empty name and body now exists in the database.
+
+**Type:** 🟡 **Exploitable via console — no server validation**
+
+**Fix:** Add a database constraint (mentioned in the deep audit) and/or add validation in the service function:
+```js
+if (!data.name?.trim() || !data.body?.trim()) {
+  throw new Error("Name and body are required");
+}
+```
+
+---
+
+### 💥 Failure #11: User pastes a 10MB string into prompt body
+
+**Trigger:** User pastes an extremely long text into the body textarea.
+
+**What happens:**
+1. [AdminPromptForm.jsx:84](file:///d:/CODING/prompter/src/components/admin/AdminPromptForm.jsx#L84) — `e.target.value.slice(0, 4000)` — **client-side limit of 4000 chars**. ✅
+2. But again: calling `createPrompt()` from the console bypasses this
+3. Supabase's `text` type has no row-size limit by default
+4. A 10MB prompt gets stored, fetched on every page load, and rendered
+
+**Type:** 🟡 **Exploitable via console**
+
+**Fix:** Database constraint: `CHECK (char_length(body) <= 10000)`
+
+---
+
+### 💥 Failure #12: Unicode/emoji in username
+
+**Trigger:** User enters `✨star_user✨` or `café_user` as username.
+
+**What happens:**
+1. [Profile.jsx:72](file:///d:/CODING/prompter/src/pages/Profile.jsx#L72) — regex `/^[a-z0-9_]{3,20}$/` — emoji and accented chars **fail validation**. ✅ Correct.
+2. Error message shows and save is blocked.
+3. Good — this is handled.
+
+**Type:** ✅ **Handled correctly**
+
+---
+
+### 💥 Failure #13: User types SQL-like strings in search
+
+**Trigger:** User types `'; DROP TABLE prompts; --` in the search box.
+
+**What happens:**
+1. Search is purely client-side filtering: `(p.name || '').toLowerCase().includes(search.toLowerCase())`
+2. No database query is made with the search term (Landing, Admin)
+3. On PublicVault, search is also client-side
+4. **Safe.** The search never touches the database.
+
+**But** — `searchPrompts()` in [promptService.js:199-200](file:///d:/CODING/prompter/src/services/promptService.js#L199-L200) uses `.ilike('name', \`%${query.name}%\`)`. Supabase's client library parameterizes queries, so this is also safe. ✅
+
+**Type:** ✅ **Safe — Supabase parameterizes queries**
+
+---
+
+### 💥 Failure #14: Double-click on "Save Prompt" button
+
+**Trigger:** User clicks "Save Prompt" twice quickly.
+
+**What happens:**
+1. First click: [AdminPromptForm.jsx:23](file:///d:/CODING/prompter/src/components/admin/AdminPromptForm.jsx#L23) — `setSaving(true)`, `createPrompt()` starts
+2. Second click: button has `disabled={saving}` on line 98 — **blocked**. ✅
+3. BUT — there's a tiny window between the click and React re-rendering with `saving=true`. On a slow device, the second click could get through.
+4. Result: two identical prompts created.
+
+**Type:** 🟢 **Race condition — unlikely but possible**
+
+**Fix:** Add a ref-based guard:
+```js
+const isSubmitting = useRef(false);
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  if (isSubmitting.current) return;
+  isSubmitting.current = true;
+  // ... existing logic
+  isSubmitting.current = false;
+};
+```
+
+---
+
+### 💥 Failure #15: Visiting `/public/"><script>alert(1)</script>`
+
+**Trigger:** Someone crafts a malicious URL with script tags in the username parameter.
+
+**What happens:**
+1. `useParams()` returns the raw string as `username`
+2. [PublicVault.jsx:98](file:///d:/CODING/prompter/src/pages/PublicVault.jsx#L98) — renders: `<h1>...USER NOT FOUND</h1>` (profile query returns null)
+3. [PublicVault.jsx:120](file:///d:/CODING/prompter/src/pages/PublicVault.jsx#L120) — if somehow a profile was found, the username is rendered inside `{username}` JSX — React auto-escapes. ✅
+4. **Safe.** React escapes all JSX interpolation.
+
+**Type:** ✅ **Safe**
+
+---
+
+## Category 3: Empty / Extreme Data
+
+*What happens with zero prompts, thousands of prompts, or missing fields?*
+
+---
+
+### 💥 Failure #16: Brand new user — zero prompts
+
+**Trigger:** User signs up, goes to Landing page. Has zero prompts.
+
+**What happens:**
+1. `getUserPrompts()` returns `[]`
+2. Landing page shows the empty state: "No prompts yet. LET'S START →"
+3. Button navigates to `/admin`
+4. Admin page also shows empty state with "LET'S START →"
+5. All works correctly ✅
+
+**Type:** ✅ **Handled — clean empty states**
+
+---
+
+### 💥 Failure #17: Power user with 2000+ prompts
+
+**Trigger:** A dedicated user has created 2000 prompts over months.
+
+**What happens:**
+1. `getUserPrompts()` runs: `SELECT * FROM prompts WHERE created_by = X ORDER BY created_at DESC` — **no LIMIT**
+2. Supabase returns up to 1000 rows (default limit) — the user is **silently missing 1000 prompts**
+3. Even with 1000 rows, the browser receives ~2MB of JSON
+4. React renders 1000 `<PromptCard>` components simultaneously
+5. Each card uses Framer Motion — that's 1000 animation instances
+6. DOM has 1000+ interactive elements — scrolling stutters, click handlers slow down
+7. The search filter runs `.filter()` on 1000 items on every keystroke
+
+**Type:** 🔴 **Performance crash at scale**
+
+**Fix:** Add pagination to the query and virtual scrolling to the UI:
+```js
+// In getUserPrompts — add pagination
+const { data, error } = await supabase
+  .from('prompts')
+  .select('*')
+  .eq('created_by', user.id)
+  .order('created_at', { ascending: false })
+  .range(0, 49); // First 50 results
+```
+
+---
+
+### 💥 Failure #18: User has no username set — visits Landing
+
+**Trigger:** Google OAuth user skips the CompleteProfile flow (by navigating directly to `/`).
+
+**What happens:**
+1. AuthContext: `user.username` is `null`
+2. [Admin.jsx:120-124](file:///d:/CODING/prompter/src/pages/Admin.jsx#L120-L124) — `handleShareVault` checks `if (!user?.username)` → redirects to `/profile`. ✅ Good.
+3. [Admin.jsx:124](file:///d:/CODING/prompter/src/pages/Admin.jsx#L124) — BUT if they somehow bypass: vault URL becomes `...origin/vault/null` — a broken link
+4. Landing page itself works fine — it doesn't use username for anything
+
+**Type:** 🟢 **Mostly handled — edge case with null in URL**
+
+**Fix:** The redirect to profile is good. As extra safety: `if (!user?.username) return;` before constructing any URL with username.
+
+---
+
+### 💥 Failure #19: PublicVault for user with null social fields
+
+**Trigger:** Visit `/public/someuser` where that user has no social links configured.
+
+**What happens:**
+1. [PublicVault.jsx:153-157](file:///d:/CODING/prompter/src/pages/PublicVault.jsx#L153-L157) — each social link is conditionally rendered with `{profile?.twitter && <a>...</a>}`
+2. If all social fields are null, nothing renders. ✅ Correct.
+3. Avatar: line 135 `{profile?.avatar_url ? <img> : <div>placeholder</div>}`. ✅ Handled.
+4. Full name: line 145 `{profile?.full_name || username}`. ✅ Fallback to username.
+
+**Type:** ✅ **Handled correctly — defensive rendering throughout**
+
+---
+
+### 💥 Failure #20: Prompt with empty tags array
+
+**Trigger:** A prompt is created with `tags: []` (the default).
+
+**What happens:**
+1. [PublicVault.jsx:117](file:///d:/CODING/prompter/src/pages/PublicVault.jsx#L117) — `p.tags?.some(tag => ...)` — optional chaining + `some()` on empty array returns `false`. ✅ Safe.
+2. Other pages don't use tags in filtering at all.
+3. No tag chips rendered (there's no tag rendering UI yet).
+
+**Type:** ✅ **Safe**
+
+---
+
+### 💥 Failure #21: User deletes a prompt, then a stale cache shows it on another page
+
+**Trigger:** User deletes a prompt on Admin page. Navigates to Landing page without refreshing.
+
+**What happens:**
+1. Admin deletes: `queryClient.setQueryData(['admin-prompts'], ...)` removes it from Admin cache
+2. But `queryClient` also has `['landing-prompts']` as a separate cache entry
+3. `staleTime` is 0, so on navigation to Landing, React Query refetches `['landing-prompts']`
+4. Since the actual `deletePrompt()` runs on a 5-second delay, **if the user navigates within 5 seconds, the Landing page refetch might return the prompt that's about to be deleted**
+5. The prompt briefly reappears, then disappears on the next refetch after the actual delete completes
+
+**Type:** 🟡 **Race condition — ghost prompt appears briefly**
+
+**Fix:** When optimistically removing from Admin cache, also remove from Landing cache:
+```js
+// Already partially done on Admin.jsx line 108, but only for saves — add for deletes too:
+queryClient.setQueryData(['landing-prompts'], (old) => {
+  if (!old) return old;
+  return old.filter(p => p.id !== prompt.id);
+});
+```
+
+---
+
+### 💥 Failure #22: Browser localStorage is full
+
+**Trigger:** Browser's localStorage is at capacity (usually 5-10MB).
+
+**What happens:**
+1. [storageService.js:59-63](file:///d:/CODING/prompter/src/services/storageService.js#L59-L63) — `localStorage.setItem()` throws `QuotaExceededError`
+2. Catch block: `console.error('Storage write error:', e)` — swallowed silently
+3. But this doesn't matter because **storageService is dead code**. The active Supabase path doesn't use localStorage.
+4. The only active localStorage usage is [Landing.jsx:16](file:///d:/CODING/prompter/src/pages/Landing.jsx#L16): `localStorage.getItem('publicView')` — reading only.
+5. And [PromptCard.jsx:39](file:///d:/CODING/prompter/src/components/PromptCard.jsx#L39): `localStorage.setItem('redirectAfterAuth', ...)` — if this fails, the redirect-after-login feature silently breaks.
+
+**Type:** 🟢 **Low risk — only affects redirect-after-login**
+
+---
+
+## Category 4: Unexpected User Behavior
+
+*What happens when users do weird things?*
+
+---
+
+### 💥 Failure #23: User navigates away during avatar upload
+
+**Trigger:** User clicks "Upload Image," selects a large file, then navigates to another page before upload completes.
+
+**What happens:**
+1. [Profile.jsx:138-174](file:///d:/CODING/prompter/src/pages/Profile.jsx#L138-L174) — canvas.toBlob callback fires, starts Supabase upload
+2. User navigates away — React unmounts Profile component
+3. `setUploadingAvatar(false)` in the finally block calls setState on an **unmounted component**
+4. React warning: "Can't perform a React state update on an unmounted component"
+5. The upload might still succeed in the background, but the profile DB isn't updated (since `setFormData` and `authService.updateProfile` happen after)
+6. Result: orphaned file in Supabase Storage, profile database not updated
+
+**Type:** 🟡 **Silent failure — orphaned file + wasted storage**
+
+**Fix:** Use an abort controller or a mounted ref:
+```js
+const mountedRef = useRef(true);
+useEffect(() => () => { mountedRef.current = false; }, []);
+
+// In the upload handler:
+if (!mountedRef.current) return;
+setUploadingAvatar(false);
+```
+
+---
+
+### 💥 Failure #24: User opens two tabs, logs out in one
+
+**Trigger:** User has app open in Tab A and Tab B. Logs out in Tab A.
+
+**What happens:**
+1. Tab A: `authService.logout()` → `supabase.auth.signOut()` → session destroyed
+2. Tab A: AuthContext clears user, redirects to `/`
+3. Tab B: `supabase.auth.onAuthStateChange` fires with `event: 'SIGNED_OUT'`
+4. [AuthContext.jsx:41-47](file:///d:/CODING/prompter/src/lib/AuthContext.jsx#L41-L47) — `setUser(null)`, `setIsAuthenticated(false)`, `navigate('/auth')`
+5. Tab B correctly detects the logout and redirects ✅
+
+**BUT** — if Tab B was mid-way through saving a prompt:
+1. `createPrompt()` calls `supabase.auth.getUser()` → returns null (session gone)
+2. Throws "Authentication required"
+3. Error is caught in AdminPromptForm: `console.error("Create prompt error:", err)` then `onSaved()` with no argument
+4. No error shown to user. The prompt is **silently lost**.
+
+**Type:** 🟡 **Silent data loss in edge case**
+
+**Fix:** Show an error message in the form when save fails:
+```js
+} catch (err) {
+  console.error("Create prompt error:", err);
+  setError(err.message || "Failed to save prompt"); // Add error state
+}
+```
+
+---
+
+### 💥 Failure #25: Copy-click during selection mode
+
+**Trigger:** User is in selection mode on PublicVault, clicking prompts to select them. They expect clicking to toggle the checkbox.
+
+**What happens:**
+1. [PromptCard.jsx:64-72](file:///d:/CODING/prompter/src/components/PromptCard.jsx#L64-L72) — if `selectionMode`, the click toggles selection instead of copying. ✅ Correct.
+2. But the card also has a separate checkbox div on [line 158-175](file:///d:/CODING/prompter/src/components/PromptCard.jsx#L158-L175) with its own `onClick` that **also** toggles selection
+3. Clicking the checkbox area triggers **both** the card's `onClick` AND the checkbox's `onClick` — double toggle = net zero change
+4. Wait — the checkbox `onClick` has `e.stopPropagation()`. ✅ That prevents the bubble.
+
+Actually, this works correctly. The checkbox click doesn't propagate to the card. ✅
+
+**Type:** ✅ **Handled — stopPropagation is used correctly**
+
+---
+
+### 💥 Failure #26: Visiting `/vault/nonexistent-user`
+
+**Trigger:** Someone shares a vault link with a username that doesn't exist (typo, deleted account).
+
+**What happens:**
+1. [SharedVault.jsx:60-71](file:///d:/CODING/prompter/src/pages/SharedVault.jsx#L60-L71) — `supabase.from('profiles').select('*').eq('username', vaultId).maybeSingle()` returns `null`
+2. `profile` is null. `isProfileLoading` becomes false.
+3. But there's **no null check for profile** like PublicVault has (PublicVault.jsx line 95-109 has a "USER NOT FOUND" screen)
+4. SharedVault proceeds to render with `profile` = null
+5. [SharedVault.jsx:144](file:///d:/CODING/prompter/src/pages/SharedVault.jsx#L144) — `{profile?.full_name || vaultId}'s` — renders the vaultId as fallback. OK.
+6. Prompts query: `enabled: !!profile?.id` — never fires since profile is null. Shows empty state.
+7. User sees a page with the vaultId displayed and "No records established in this vault"
+
+**Type:** 🟡 **Bad UX — no clear "user not found" message like PublicVault has**
+
+**Fix:** Add the same null check that PublicVault has:
+```jsx
+if (!isProfileLoading && !profile) {
+  return (
+    <div className="min-h-screen bg-background flex flex-col items-center justify-center">
+      <h1>VAULT NOT FOUND</h1>
+      <button onClick={() => navigate('/')}>RETURN TO HOME</button>
+    </div>
+  );
+}
+```
+
+---
+
+### 💥 Failure #27: Rapid auth state changes (login → logout → login in seconds)
+
+**Trigger:** Flaky network causes Supabase auth events to fire rapidly.
+
+**What happens:**
+1. `onAuthStateChange` fires `SIGNED_IN` → `handleAuthenticatedUser()` starts (async)
+2. Before it finishes, `SIGNED_OUT` fires → user is set to null
+3. Then `SIGNED_IN` fires again → `handleAuthenticatedUser()` starts again
+4. Two concurrent `handleAuthenticatedUser()` calls are now racing
+5. Both call `ensureProfile()`, both try to `setUser()` with different timing
+6. The 2-second `setTimeout` in the `finally` block adds to the chaos — delayed `setIsLoadingAuth(false)` calls interfere with fresh loading states
+
+**Type:** 🟡 **Race condition — potential state corruption**
+
+**Fix:** Track the latest auth event with a counter or abort token:
+```js
+const authGeneration = useRef(0);
+
+const handleAuthenticatedUser = async (user) => {
+  const gen = ++authGeneration.current;
+  try {
+    const profile = await authService.ensureProfile(user);
+    if (gen !== authGeneration.current) return; // Stale — newer event arrived
+    setUser({ ...user, ...profile });
+  } catch (err) {
+    if (gen !== authGeneration.current) return;
+    console.error(err);
+  }
+};
+```
+
+---
+
+### 💥 Failure #28: User hits browser back button from CompleteProfile
+
+**Trigger:** Google user lands on CompleteProfile. Hits browser back button.
+
+**What happens:**
+1. Browser navigates back (likely to the OAuth redirect URL or Auth page)
+2. AuthContext's `onAuthStateChange` listener is still active
+3. User still has a session but no username
+4. AuthContext's redirect logic on [line 78-81](file:///d:/CODING/prompter/src/lib/AuthContext.jsx#L78-L81) kicks in: `if (provider === 'google' && !profile?.username)` → redirect back to `/complete-profile`
+5. User is **trapped in a redirect loop**: back → redirect to CompleteProfile → back → redirect...
+6. The only escape is to complete the profile or close the tab
+
+**Type:** 🟡 **Bad UX — user feels trapped**
+
+**Fix:** Add a "Skip for now" option to CompleteProfile, or add a logout button so the user can escape:
+```jsx
+<button onClick={() => authService.logout().then(() => navigate('/auth'))}>
+  LOG OUT INSTEAD
+</button>
+```
+
+---
+
+## Summary Dashboard
+
+### By severity
+
+| Type | Count | Examples |
+|------|-------|---------|
+| 🔴 Crashes / Hangs | 2 | #1 (infinite spinner), #17 (DOM overload at 2000 prompts) |
+| 🟡 Silent Failures | 12 | #2, #3, #4, #5, #6, #7, #8, #21, #23, #24, #26, #27 |
+| 🟡 Bad UX | 4 | #6 (native alert), #7 (no error msg), #26 (no 404), #28 (redirect trap) |
+| ✅ Handled correctly | 10 | #9, #12, #13, #15, #16, #19, #20, #22, #25, input validation |
+
+### Top 5 fixes by impact
+
+| Priority | Fix | Time | Failures addressed |
+|----------|-----|------|-------------------|
+| 1 | Add try/catch to AuthContext init | 5 min | #1 (infinite spinner) |
+| 2 | Stop swallowing errors in queryFn — let React Query handle them | 15 min | #3 (empty state on error) |
+| 3 | Add "not found" screen to SharedVault | 5 min | #26 (bad 404 UX) |
+| 4 | Restore prompt to cache on delete failure | 10 min | #4 (ghost deletes) |
+| 5 | Add auth generation counter to prevent race conditions | 15 min | #27 (state corruption) |
+
+**Total for all top-5 fixes: ~50 minutes** to eliminate the most dangerous real-world failures.

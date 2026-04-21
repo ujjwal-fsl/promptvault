@@ -1,0 +1,550 @@
+# PromptVault — Modularity Audit
+
+---
+
+## What is modularity?
+
+Think of your codebase like a toolbox. In a **modular** toolbox, each tool has its own slot — you can pull out the screwdriver without disturbing the hammer. In a **non-modular** toolbox, everything is tangled together — pulling out one tool drags three others with it.
+
+Good modularity means:
+- **Isolated**: Each feature lives in its own space
+- **Independent**: You can change one feature without breaking another
+- **Reusable**: Common logic is written once, used everywhere
+
+---
+
+## Current Feature Map
+
+Your app has **6 distinct feature domains**. Here's where each one lives today:
+
+```mermaid
+graph LR
+    subgraph "Feature Domains"
+        AUTH[🔐 Auth]
+        PROMPTS[📝 Prompts]
+        PLANS[💎 Plans]
+        PROFILE[👤 Profile]
+        VAULTS[🔗 Shared/Public Vaults]
+        UI[🎨 UI Components]
+    end
+
+    subgraph "Files"
+        AC[AuthContext.jsx]
+        AS[authService.js]
+        AP[Auth.jsx page]
+        CP[CompleteProfile.jsx]
+
+        PS[promptService.js]
+        AF[AdminPromptForm.jsx]
+        AR[AdminPromptRow.jsx]
+        PC[PromptCard.jsx]
+        AD[Admin.jsx page]
+        LP[Landing.jsx page]
+
+        PL[plans.js]
+        UP[usePlan.js]
+
+        PP[Profile.jsx page]
+
+        SV[SharedVault.jsx]
+        PV[PublicVault.jsx]
+    end
+
+    AUTH --- AC
+    AUTH --- AS
+    AUTH --- AP
+    AUTH --- CP
+
+    PROMPTS --- PS
+    PROMPTS --- AF
+    PROMPTS --- AR
+    PROMPTS --- PC
+    PROMPTS --- AD
+    PROMPTS --- LP
+
+    PLANS --- PL
+    PLANS --- UP
+
+    PROFILE --- PP
+
+    VAULTS --- SV
+    VAULTS --- PV
+
+    UI --- PC
+```
+
+---
+
+## Dimension 1: Are features isolated or mixed?
+
+### Scoring each feature
+
+| Feature | Isolated? | Verdict |
+|---------|-----------|---------|
+| **Plans** | ✅ Yes | Textbook isolation. `plans.js` has zero imports from other features. `usePlan.js` only imports from `plans.js` and `AuthContext`. No other feature leaks into it. |
+| **Auth Service** | ✅ Mostly | `authService.js` only depends on `supabase.js`. Clean boundary. |
+| **Auth UI** | ⚠️ Partially | `Auth.jsx` is self-contained but carries 300 lines of CSS that belong in a stylesheet. `CompleteProfile.jsx` duplicates validation logic from `Profile.jsx`. |
+| **Profile** | ❌ No | `Profile.jsx` is a 427-line blob mixing: avatar upload (Supabase Storage), username validation (direct Supabase query), form state management, plan-gated UI sections, and navigation. Five concerns in one file. |
+| **Prompts** | ❌ No | Prompt logic is scattered across 6 files. `PromptCard.jsx` alone mixes clipboard, usage tracking, vault-adding, selection mode, and route detection. The search/filter logic is copy-pasted in 4 different pages. |
+| **Shared/Public Vaults** | ❌ No | These two pages are 70% identical code. The "bulk add to vault" logic, the selection toolbar, the profile header — all duplicated across both files instead of being shared components. |
+
+### The dependency tangle (what imports what)
+
+This diagram shows which features **reach into** other features:
+
+```
+PromptCard.jsx
+├── imports authService       ← Auth feature
+├── imports promptService     ← Prompts feature  
+├── imports useAuth           ← Auth feature
+├── imports useQueryClient    ← React Query
+├── imports FEATURES          ← Feature flags
+├── imports useNavigate       ← Router
+└── imports useLocation       ← Router
+    
+    6 external dependencies for a single UI card component.
+    It cannot function without Auth, Prompts, Router, Query, and Flags.
+
+AdminPromptRow.jsx
+├── imports usePlan           ← Plans feature
+├── imports supabase          ← Direct DB access (bypassing service layer!)
+└── imports useQueryClient    ← React Query
+
+Profile.jsx
+├── imports useAuth           ← Auth feature
+├── imports usePlan           ← Plans feature
+├── imports authService       ← Auth service
+├── imports supabase          ← Direct DB access (bypassing service layer!)
+└── imports useQueryClient    ← React Query
+
+PublicVault.jsx
+├── imports supabase          ← Direct DB access (bypassing service layer!)
+├── imports useAuth           ← Auth feature
+├── imports promptService     ← Prompt service (partial — also calls supabase directly)
+```
+
+> [!WARNING]
+> **The `supabase` client is imported directly in 4 components** that are supposed to go through the service layer. This means the "service layer" isn't actually a boundary — it's an optional suggestion that's ignored when convenient.
+
+---
+
+## Dimension 2: Can features be modified independently?
+
+For each feature, I asked: *"If I change ONLY this feature, what else breaks?"*
+
+| If you change... | What else breaks | Independence |
+|------------------|-----------------|--------------|
+| **Plan hierarchy** (add a new plan level) | Nothing. Add one line to `PLANS`, one line to `FEATURES`. UI adapts automatically via `usePlan()`. | ✅ Fully independent |
+| **Auth flow** (change login provider) | `Auth.jsx` and `authService.js` only. No other page contains login logic. | ✅ Mostly independent |
+| **Prompt creation** (add a new field like "category") | `promptService.createPrompt` + `AdminPromptForm` + `PromptCard` + `Landing.jsx` search filter + `Admin.jsx` search filter + `PublicVault.jsx` search filter + `SharedVault.jsx` search filter. **7 files.** | ❌ Highly coupled |
+| **Search/filter behavior** | 4 files: Landing, Admin, PublicVault, SharedVault — each has its own copy of the filter logic. Change one, manually replicate to the other three. | ❌ Copy-paste coupling |
+| **Prompt card appearance** | `PromptCard.jsx` — but you risk breaking clipboard, usage tracking, vault-adding, and selection mode because the UI and logic are interleaved. | ⚠️ Risky to change |
+| **"Add to vault" flow** | `PublicVault.jsx` AND `SharedVault.jsx` — identical logic exists in both. Plus `PromptCard.jsx` which has its own single-add implementation. 3 places to update. | ❌ Duplicated |
+| **Profile fields** (add a new social link) | `Profile.jsx` only — form state, validation, and layout are all co-located. This is actually fine, though the file is too long. | ✅ Contained (but bloated) |
+
+---
+
+## Dimension 3: Are functions reusable?
+
+| Function/Pattern | Used in | Reusable? | Problem |
+|-----------------|---------|-----------|---------|
+| `getUserPrompts()` | Landing, Admin | ✅ Yes | Clean service function, called by multiple pages |
+| `addPromptToVault()` | PromptCard, PublicVault, SharedVault | ✅ Yes | Good reusable service function |
+| `usePlan()` hook | Admin, Landing, Profile, AdminPromptRow | ✅ Yes | Excellent — pre-binds user, returns booleans |
+| Search/filter logic | Landing, Admin, PublicVault, SharedVault | ❌ **No — copied 4 times** | Each page has `prompts.filter(p => (p.name \|\| '').toLowerCase().includes(search...))` written inline |
+| Auth guard (`!isLoadingAuth && !isAuthenticated → redirect`) | Landing, Admin, Profile, AuthContext, App.jsx | ❌ **No — copied 5 times** | Same `useEffect` with `navigate('/auth')` in 3 pages, plus 2 other variants |
+| Username validation | Profile.jsx (×2), CompleteProfile.jsx | ❌ **No — copied 3 times** | Same regex and same Supabase check-if-taken query |
+| Bulk selection + add toolbar | PublicVault, SharedVault | ❌ **No — copied 2 times** | Identical `selectionMode` state, `handleBulkAdd`, and footer JSX |
+| Prompt data shape handling | AdminPromptForm line 11 | ❌ Fragile | `editingPrompt.name \|\| editingPrompt.title` — ad-hoc field name guessing instead of a clean mapper |
+
+### Reusability scorecard
+
+```
+Reusable functions:     4 (getUserPrompts, addPromptToVault, usePlan, incrementUsage)
+Copy-pasted logic:      5 patterns × 2-5 copies each = ~15 redundant code blocks
+Total reusability:      ⭐⭐ out of 5
+```
+
+---
+
+## The 7 Specific Tangling Points
+
+Here are the exact places where features bleed into each other:
+
+| # | Tangle | Files involved | Lines of duplicated/mixed code |
+|---|--------|---------------|-------------------------------|
+| 1 | **PromptCard does 6 jobs** | PromptCard.jsx | 205 lines doing clipboard + tracking + vault-add + selection + route detection + animation |
+| 2 | **Search filter copy-pasted** | Landing, Admin, PublicVault, SharedVault | ~6 lines × 4 files = 24 lines of identical logic |
+| 3 | **Auth guard copy-pasted** | Landing, Admin, Profile + AuthContext + App.jsx | ~5 lines × 5 locations |
+| 4 | **Username validation copy-pasted** | Profile.jsx, CompleteProfile.jsx | ~20 lines × 2 files (regex + availability check + error states) |
+| 5 | **Bulk-add UI cloned** | PublicVault, SharedVault | ~50 lines of identical selection state + toolbar JSX in each |
+| 6 | **Direct Supabase calls bypass services** | Profile, PublicVault, SharedVault, AdminPromptRow | 4 components call `supabase.from()` directly |
+| 7 | **Legacy code lives alongside active code** | promptService.js, storageService.js | 116 lines of dead localStorage code mixed into the active service file |
+
+---
+
+## Restructuring Plan — 6 Practical Steps
+
+> These are **incremental improvements** — not a rewrite. Each step is self-contained. You can do them one at a time, in order, testing after each.
+
+---
+
+### Step 1: Extract the search filter into a reusable hook
+
+**Before** (same code in 4 files):
+```js
+// Landing.jsx, Admin.jsx, PublicVault.jsx, SharedVault.jsx
+const [search, setSearch] = useState('');
+const filteredPrompts = activePrompts.filter(p =>
+  (p.name || '').toLowerCase().includes(search.toLowerCase()) ||
+  (p.body || '').toLowerCase().includes(search.toLowerCase())
+);
+```
+
+**After** — create one hook:
+
+```
+📁 src/hooks/usePromptFilter.js  ← NEW FILE
+```
+
+```js
+// src/hooks/usePromptFilter.js
+import { useState, useMemo } from 'react';
+
+export function usePromptFilter(prompts = []) {
+  const [search, setSearch] = useState('');
+
+  const activePrompts = useMemo(
+    () => prompts.filter(p => !p.isDeleted),
+    [prompts]
+  );
+
+  const filteredPrompts = useMemo(() => {
+    if (!search.trim()) return activePrompts;
+    const q = search.toLowerCase();
+    return activePrompts.filter(p =>
+      (p.name || '').toLowerCase().includes(q) ||
+      (p.body || '').toLowerCase().includes(q) ||
+      (p.tags?.some(tag => tag.toLowerCase().includes(q)))
+    );
+  }, [activePrompts, search]);
+
+  return { search, setSearch, filteredPrompts, totalCount: activePrompts.length };
+}
+```
+
+**Now in each page:**
+```js
+const { search, setSearch, filteredPrompts, totalCount } = usePromptFilter(prompts);
+```
+
+**Effort:** 20 minutes. **Files changed:** 5 (1 new + 4 pages simplified).
+
+---
+
+### Step 2: Extract username validation into a shared utility
+
+**Before** (regex in 3 places, availability check in 2):
+
+```
+Profile.jsx line 72:   const regex = /^[a-z0-9_]{3,20}$/;
+Profile.jsx line 188:  const regex = /^[a-z0-9_]{3,20}$/;
+CompleteProfile.jsx:   const regex = /^[a-z0-9_]{3,20}$/;
+```
+
+**After** — add to authService:
+
+```js
+// Add to src/services/authService.js
+
+export const USERNAME_REGEX = /^[a-z0-9_]{3,20}$/;
+export const USERNAME_RULES = '3–20 chars: lowercase letters, numbers, underscores only';
+
+// Also add:
+checkUsernameAvailable: async (username, currentUserId) => {
+  const { data: existing } = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('username', username)
+    .neq('id', currentUserId)
+    .maybeSingle();
+  return !existing;
+},
+```
+
+**Now in Profile.jsx and CompleteProfile.jsx:**
+```js
+import { USERNAME_REGEX, USERNAME_RULES, authService } from '@/services/authService';
+
+if (!USERNAME_REGEX.test(val)) {
+  setError(USERNAME_RULES);
+}
+const isAvailable = await authService.checkUsernameAvailable(val, user.id);
+```
+
+**Effort:** 15 minutes. **Files changed:** 3 (authService + Profile + CompleteProfile).
+
+---
+
+### Step 3: Create a `<ProtectedRoute>` wrapper to replace auth guards
+
+**Before** (same useEffect in 3 pages):
+```js
+// Landing.jsx, Admin.jsx, Profile.jsx — each has this:
+useEffect(() => {
+  if (!isLoadingAuth && !isAuthenticated) {
+    navigate('/auth', { replace: true });
+  }
+}, [isLoadingAuth, isAuthenticated, navigate]);
+
+if (isLoadingAuth) {
+  return <div className="min-h-screen bg-background" />;
+}
+```
+
+**After** — create one wrapper:
+
+```
+📁 src/components/ProtectedRoute.jsx  ← NEW FILE
+```
+
+```jsx
+// src/components/ProtectedRoute.jsx
+import { useAuth } from '@/lib/AuthContext';
+import { Navigate } from 'react-router-dom';
+
+export default function ProtectedRoute({ children }) {
+  const { isAuthenticated, isLoadingAuth } = useAuth();
+
+  if (isLoadingAuth) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate to="/auth" replace />;
+  }
+
+  return children;
+}
+```
+
+**Now in App.jsx:**
+```jsx
+<Route path="/" element={<ProtectedRoute><Landing /></ProtectedRoute>} />
+<Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
+<Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+```
+
+**Then delete** the `useEffect` auth guard and `isLoadingAuth` check from Landing, Admin, and Profile.
+
+**Effort:** 25 minutes. **Files changed:** 4 (1 new + App.jsx + 3 pages get simpler).
+
+---
+
+### Step 4: Extract the bulk-add toolbar into a shared component
+
+**Before** — PublicVault.jsx and SharedVault.jsx each have ~50 lines of identical footer:
+
+```jsx
+// Both files have this exact same block:
+{selectionMode ? (
+  <div className="flex gap-4">
+    <button onClick={() => setSelectionMode(false)}>CANCEL</button>
+    <button onClick={handleBulkAdd} disabled={...}>
+      {status === "loading" ? "ADDING..." : status === "success" ? "PROMPTS ADDED!" : `ADD ${n} PROMPTS`}
+    </button>
+  </div>
+) : (
+  <button onClick={() => setSelectionMode(true)}>ADD PROMPTS TO YOUR VAULT</button>
+)}
+```
+
+**After:**
+
+```
+📁 src/components/BulkAddToolbar.jsx  ← NEW FILE
+```
+
+```jsx
+export default function BulkAddToolbar({
+  selectionMode, setSelectionMode,
+  selectedCount, status, addedCount,
+  onBulkAdd
+}) {
+  // All the toolbar JSX lives here, written once
+}
+```
+
+**Effort:** 30 minutes. **Files changed:** 3 (1 new + PublicVault + SharedVault each lose ~50 lines).
+
+---
+
+### Step 5: Move all direct Supabase calls into services
+
+**Today — 4 components bypass the service layer:**
+
+| Component | Direct call | Should go to |
+|-----------|------------|-------------|
+| Profile.jsx line 94 | `supabase.from('profiles').select('id').eq('username',...)` | `authService.checkUsernameAvailable()` (from Step 2) |
+| Profile.jsx line 148 | `supabase.storage.from('avatars').upload(...)` | New: `authService.uploadAvatar(userId, blob)` |
+| PublicVault.jsx line 63 | `supabase.from('profiles').select('*').eq('username',...)` | Already exists: `authService.getProfileByUsername()` |
+| SharedVault.jsx line 63 | `supabase.from('profiles').select('*').eq('username',...)` | Already exists: `authService.getProfileByUsername()` |
+| AdminPromptRow.jsx line 16 | `supabase.from('prompts').update({ is_public: !... })` | New: `promptService.togglePublic(id, currentValue)` |
+
+**What to add to services:**
+
+```js
+// Add to authService.js
+uploadAvatar: async (userId, blob) => {
+  const filePath = `${userId}.webp`;
+  const { error } = await supabase.storage
+    .from('avatars')
+    .upload(filePath, blob, { upsert: true, contentType: 'image/webp' });
+  if (error) throw error;
+  const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(filePath);
+  await authService.updateProfile(userId, { avatar_url: publicUrl });
+  return publicUrl;
+},
+
+// Add to promptService.js (the Supabase section)
+export const togglePromptPublic = async (promptId, currentValue) => {
+  const { error } = await supabase
+    .from('prompts')
+    .update({ is_public: !currentValue })
+    .eq('id', promptId);
+  if (error) throw error;
+};
+```
+
+**Then** replace the direct `supabase.from(...)` calls in each component with the service function.
+
+**Effort:** 40 minutes. **Files changed:** 5 (2 services + 3 components).
+
+---
+
+### Step 6: Delete dead code
+
+**Files to delete entirely:**
+- `src/services/storageService.js` — localStorage fake database, never used by active code
+
+**Code to remove from promptService.js:**
+- Lines 1-116 — the entire `promptService` object (the localStorage-based one)
+- Line 1 — `import { storageService } from './storageService'` 
+
+**Files to delete:**
+- `src/lib/app-params.js` — exports an empty object
+- `src/utils/index.ts` — `createPageUrl` is imported but never called
+
+**Import to remove:**
+- `Admin.jsx` line 11 — `import { createPageUrl } from '@/utils'` (unused)
+
+**Effort:** 10 minutes. **Files changed:** 3 deleted, 2 trimmed.
+
+---
+
+## Before vs After — File Structure
+
+````carousel
+### Before (current flat structure)
+```
+src/
+├── components/
+│   ├── admin/
+│   │   ├── AdminPromptForm.jsx    
+│   │   └── AdminPromptRow.jsx     ← calls supabase directly
+│   ├── CornerNav.jsx
+│   ├── EmptyState.jsx
+│   ├── PromptCard.jsx             ← 205-line god component
+│   └── UserNotRegisteredError.jsx
+├── hooks/
+│   ├── use-mobile.jsx
+│   └── usePlan.js                 ← only reusable hook
+├── services/
+│   ├── authService.js
+│   ├── promptService.js           ← dead code mixed with live code
+│   └── storageService.js          ← 100% dead code
+├── lib/
+│   ├── AuthContext.jsx
+│   ├── app-params.js              ← dead code
+│   ├── plans.js
+│   └── ...
+├── utils/
+│   └── index.ts                   ← dead code
+└── pages/
+    ├── Admin.jsx                  ← has own auth guard + search filter
+    ├── Landing.jsx                ← has own auth guard + search filter  
+    ├── Profile.jsx                ← has own auth guard + username validation
+    ├── PublicVault.jsx            ← has own search filter + bulk add toolbar
+    └── SharedVault.jsx            ← has own search filter + bulk add toolbar (copy-pasted)
+```
+<!-- slide -->
+### After (with 6 steps applied)
+```
+src/
+├── components/
+│   ├── admin/
+│   │   ├── AdminPromptForm.jsx    
+│   │   └── AdminPromptRow.jsx     ← now calls promptService.togglePublic()
+│   ├── BulkAddToolbar.jsx         ← NEW — shared by PublicVault + SharedVault
+│   ├── ProtectedRoute.jsx         ← NEW — replaces 3 auth guards
+│   ├── CornerNav.jsx
+│   ├── EmptyState.jsx
+│   ├── PromptCard.jsx
+│   └── UserNotRegisteredError.jsx
+├── hooks/
+│   ├── use-mobile.jsx
+│   ├── usePlan.js
+│   └── usePromptFilter.js        ← NEW — replaces 4 copy-pasted filters
+├── services/
+│   ├── authService.js             ← +checkUsernameAvailable, +uploadAvatar, +USERNAME_REGEX
+│   └── promptService.js           ← dead code removed, +togglePromptPublic
+├── lib/
+│   ├── AuthContext.jsx
+│   ├── plans.js
+│   └── ...
+└── pages/
+    ├── Admin.jsx                  ← simpler (no auth guard, no inline filter)
+    ├── Landing.jsx                ← simpler (no auth guard, no inline filter)
+    ├── Profile.jsx                ← simpler (uses shared username validation)
+    ├── PublicVault.jsx            ← simpler (uses BulkAddToolbar + filter hook)
+    └── SharedVault.jsx            ← simpler (uses BulkAddToolbar + filter hook)
+
+Deleted:
+  ✗ src/services/storageService.js
+  ✗ src/lib/app-params.js
+  ✗ src/utils/index.ts
+```
+````
+
+---
+
+## Total effort for all 6 steps
+
+| Step | What | Time | Lines removed | Lines added |
+|------|------|------|--------------|-------------|
+| 1 | Search filter hook | 20 min | ~24 duplicate | ~25 (in hook) |
+| 2 | Username validation | 15 min | ~40 duplicate | ~15 (in service) |
+| 3 | ProtectedRoute | 25 min | ~30 duplicate | ~20 (in component) |
+| 4 | BulkAddToolbar | 30 min | ~100 duplicate | ~50 (in component) |
+| 5 | Service layer enforcement | 40 min | ~30 direct calls | ~30 (in services) |
+| 6 | Delete dead code | 10 min | ~200 lines | 0 |
+| **Total** | | **~2.5 hours** | **~424 lines removed** | **~140 lines added** |
+
+**Net result: ~280 fewer lines of code** and a codebase that's meaningfully more modular.
+
+---
+
+## Modularity Score — Before vs After
+
+| Dimension | Before | After |
+|-----------|--------|-------|
+| Feature isolation | ⭐⭐ | ⭐⭐⭐⭐ |
+| Independent modifiability | ⭐⭐ | ⭐⭐⭐⭐ |
+| Function reusability | ⭐⭐ | ⭐⭐⭐⭐ |
+| Dead code | 200+ lines shipping | 0 |
+| Copy-pasted logic | 5 patterns × 2-5 copies | 0 duplicates |
+| Direct DB calls in UI | 4 components | 0 |

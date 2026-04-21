@@ -1,0 +1,351 @@
+# PromptVault — Full Codebase Architecture Analysis
+
+> Think of PromptVault like a **personal recipe book app** — except instead of recipes, people save **AI prompts**. They can organize them, share them with friends via a link, and even make a public portfolio of their best prompts for others to browse and "steal" into their own collection.
+
+---
+
+## 1. The Big Picture — How Everything Connects
+
+```mermaid
+graph TB
+    subgraph "🖥️ What the User Sees (Frontend)"
+        Auth[Auth Page<br/>Login / Sign Up]
+        CP[Complete Profile<br/>Google users pick username]
+        Landing[Landing Page<br/>Personal prompt vault]
+        Admin[Admin Page<br/>Create, edit, delete prompts]
+        Profile[Profile Page<br/>Settings, avatar, socials]
+        SharedVault[Shared Vault<br/>Friend's prompts via link]
+        PublicVault[Public Vault<br/>Creator's public portfolio]
+    end
+
+    subgraph "⚙️ Brain of the App (Logic Layer)"
+        AuthCtx[AuthContext<br/>Who is logged in?]
+        PlanSys[Plan System<br/>What can they do?]
+        ReactQuery[React Query<br/>Cache & fetch manager]
+    end
+
+    subgraph "🔌 Messenger Layer (Services)"
+        AuthSvc[authService<br/>Login, signup, profile CRUD]
+        PromptSvc[promptService<br/>Prompt CRUD & sharing]
+    end
+
+    subgraph "☁️ Cloud Database (Supabase)"
+        SupaAuth[Supabase Auth<br/>Email + Google login]
+        ProfilesDB[(profiles table)]
+        PromptsDB[(prompts table)]
+        AvatarsBucket[(avatars storage)]
+    end
+
+    Auth --> AuthSvc
+    CP --> AuthSvc
+    Landing --> PromptSvc
+    Admin --> PromptSvc
+    Profile --> AuthSvc
+    SharedVault --> PromptSvc
+    PublicVault --> PromptSvc
+
+    AuthSvc --> SupaAuth
+    AuthSvc --> ProfilesDB
+    PromptSvc --> PromptsDB
+    Profile --> AvatarsBucket
+
+    AuthCtx --> AuthSvc
+    PlanSys --> AuthCtx
+    ReactQuery --> PromptSvc
+```
+
+---
+
+## 2. Frontend — The Visual Layer (What Users See & Touch)
+
+Your frontend is built with **React** (a popular tool for building interactive websites) and styled with **TailwindCSS** (a utility-based styling system). The visual style is intentionally **minimal, monospaced, developer-tool aesthetic** — lots of uppercase labels, tight tracking, and clean borders.
+
+### Pages — 8 distinct screens
+
+| Page | File | What it does |
+|------|------|-------------|
+| **Landing** | [Landing.jsx](file:///d:/CODING/prompter/src/pages/Landing.jsx) | Your personal prompt library. Shows all your prompts as clickable cards. Click = copy to clipboard. Has search and a "Public View" toggle (Creator-only). |
+| **Admin** | [Admin.jsx](file:///d:/CODING/prompter/src/pages/Admin.jsx) | The "command center." Create new prompts, edit existing ones, delete with undo, search, and share vault links. The main management dashboard. |
+| **Auth** | [Auth.jsx](file:///d:/CODING/prompter/src/pages/Auth.jsx) | Split-screen login/signup page. Supports email+password and Google OAuth. Has its own self-contained CSS (not Tailwind). |
+| **Complete Profile** | [CompleteProfile.jsx](file:///d:/CODING/prompter/src/pages/CompleteProfile.jsx) | One-time screen shown to Google OAuth users who don't have a username yet. Forces them to choose one before proceeding. |
+| **Profile** | [Profile.jsx](file:///d:/CODING/prompter/src/pages/Profile.jsx) | Settings page: edit name, username (with live availability check), upload avatar, and — if on Creator plan — manage social links and public profile toggle. |
+| **Shared Vault** | [SharedVault.jsx](file:///d:/CODING/prompter/src/pages/SharedVault.jsx) | Someone else's full prompt collection viewed via a share link (`/vault/username`). Shows **ALL** prompts (public + private). Visitors can select prompts and add them to their own vault. |
+| **Public Vault** | [PublicVault.jsx](file:///d:/CODING/prompter/src/pages/PublicVault.jsx) | A creator's public portfolio (`/public/username`). Shows **only prompts marked as public**. Includes their social links and avatar. Visitors can bulk-add prompts. |
+| **Verified** | [Verified.jsx](file:///d:/CODING/prompter/src/pages/Verified.jsx) | A simple landing page shown after email verification confirms the account. Redirects to home. |
+
+### Reusable Components
+
+| Component | What it does |
+|-----------|-------------|
+| **PromptCard** | The main interactive card. Displays a prompt's name and body. Click = copy to clipboard with animation. On external vaults, shows an "Add to Vault" button. Handles selection mode (checkboxes) for bulk operations. Also tracks usage count. |
+| **AdminPromptForm** | The form in the Admin page for creating/editing prompts (name, body, tags, public toggle). |
+| **AdminPromptRow** | A single row in the Admin's prompt list with edit/delete actions. |
+| **CornerNav** | A tiny navigation link pinned to the top-right corner. |
+| **EmptyState** | A styled "nothing here" message shown when lists are empty. |
+| **UserNotRegisteredError** | Error screen shown when auth detects an unrecognized user. |
+
+---
+
+## 3. Logic Layer — The Brain Behind the Scenes
+
+This is the **decision-making machinery** that runs invisibly while the user interacts with the screens.
+
+### 3a. Authentication System — "Who is this person?"
+
+**File:** [AuthContext.jsx](file:///d:/CODING/prompter/src/lib/AuthContext.jsx)
+
+Think of this as the **security guard at the door**. Every single page in the app is wrapped inside this system. Here's what it does:
+
+1. When the app loads, it asks Supabase: *"Is there an active session?"*
+2. If yes → it fetches or creates the user's profile from the database, then lets them through
+3. If no → the app knows the user is a guest
+4. It listens for auth events in real-time (login, logout, token refresh) and reacts immediately
+
+It provides to every page: `user` (who they are), `isAuthenticated` (are they logged in), `isLoadingAuth` (still checking), and `logout`
+
+### 3b. Plan System — "What are they allowed to do?"
+
+**Files:** [plans.js](file:///d:/CODING/prompter/src/lib/plans.js) + [usePlan.js](file:///d:/CODING/prompter/src/hooks/usePlan.js)
+
+This is like a **tiered membership card**. There are 4 levels:
+
+| Level | Plan | What it unlocks |
+|-------|------|-----------------|
+| 0 | **Free** | Basic vault, share vault link |
+| 1 | **Plus** | *(No exclusive features defined yet — room for growth)* |
+| 2 | **Creator** | Public vault, public prompts, social links, public profile, public view toggle |
+| 3 | **Creator Plus** | Premium features *(placeholder)* |
+
+The system is **feature-first**: instead of scattering `if (plan === 'CREATOR')` checks everywhere, there's a central map that says *"Feature X requires Plan Y."* Each page just asks: `canSharePublicVault?` → yes or no. Clean and expandable.
+
+### 3c. React Query — "Smart data fetching"
+
+React Query acts as a **smart assistant** that remembers data it already fetched, so your app doesn't ask the database the same question twice. It handles:
+- Caching prompt lists (`admin-prompts`, `landing-prompts`)
+- Automatic background refetching
+- **Optimistic updates** — when you delete a prompt, the UI removes it instantly, then confirms with the database afterward
+
+### 3d. Feature Flags
+
+**File:** [featureFlags.js](file:///d:/CODING/prompter/src/config/featureFlags.js)
+
+A simple on/off switch controlled by environment variables. Currently only one flag: `ADD_TO_VAULT` — controls whether the "Add to your vault" functionality is active on external vaults.
+
+---
+
+## 4. Database Structure — Where Your Data Lives
+
+Your database is hosted on **Supabase** (think of it as a managed PostgreSQL database with built-in authentication). Based on the code, here's the inferred schema:
+
+### `profiles` table — One row per user
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `id` | UUID | Matches Supabase Auth user ID |
+| `email` | Text | User's email |
+| `username` | Text (unique) | Global identifier like `@johndoe` |
+| `full_name` | Text | Display name |
+| `avatar_url` | Text | Profile picture URL |
+| `plan` | Text | `FREE`, `PLUS`, `CREATOR`, or `CREATOR_PLUS` |
+| `instagram` | Text | Social link (Creator only) |
+| `twitter` | Text | Social link (Creator only) |
+| `youtube` | Text | Social link (Creator only) |
+| `website` | Text | Social link (Creator only) |
+| `is_public_profile` | Boolean | Whether profile is publicly discoverable |
+| `created_at` | Timestamp | When the account was created |
+
+### `prompts` table — One row per saved prompt
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `id` | UUID | Unique prompt identifier |
+| `name` | Text | Prompt title |
+| `body` | Text | The actual prompt content |
+| `tags` | Text[] (Array) | Category tags for filtering |
+| `created_by` | UUID (FK → profiles.id) | Who owns this prompt |
+| `is_public` | Boolean | Whether it appears on the public vault |
+| `usage_count` | Integer | How many times the prompt was copied |
+| `source_prompt_id` | UUID (nullable) | If this prompt was cloned from someone else's |
+| `attribution_username` | Text (nullable) | Original creator's username for attribution |
+| `created_at` | Timestamp | When the prompt was created |
+
+### `avatars` storage bucket — Profile pictures
+
+Files are stored as `{user_id}.webp` in Supabase Storage. Images are converted to WebP format client-side before upload for optimization.
+
+---
+
+## 5. API Interactions — How the App Talks to the Database
+
+There is **no traditional backend server** (no Express, no Next.js API routes). Your app talks **directly** from the browser to Supabase using the Supabase JavaScript client library. This is a "serverless" architecture.
+
+### Communication Pattern
+
+```
+User Action → React Component → Service Function → Supabase Client → PostgreSQL Database
+                                                  → Supabase Auth
+                                                  → Supabase Storage
+```
+
+### Service Files — The Messengers
+
+| Service | File | Responsibilities |
+|---------|------|-----------------|
+| **authService** | [authService.js](file:///d:/CODING/prompter/src/services/authService.js) | `signup`, `login`, `loginWithGoogle`, `ensureProfile`, `getCurrentUser`, `logout`, `updateUsername`, `updateProfile`, `getProfileByUsername` |
+| **promptService** | [promptService.js](file:///d:/CODING/prompter/src/services/promptService.js) | `createPrompt`, `getUserPrompts`, `deletePrompt`, `incrementUsage`, `searchPrompts`, `getPublicPromptsByUserId`, `addPromptToVault` |
+| **storageService** | [storageService.js](file:///d:/CODING/prompter/src/services/storageService.js) | Legacy localStorage-based data persistence *(no longer used by active features)* |
+
+> [!IMPORTANT]
+> **Dual Data Layer**: `promptService.js` contains **two separate systems** in one file. The top half (lines 1-116) is a legacy `localStorage`-based system using `storageService`. The bottom half (lines 118-305) is the live **Supabase-backed** system. The UI currently uses the Supabase functions — the legacy code is dormant but still present.
+
+---
+
+## 6. Data Flow — Step-by-Step Walkthroughs
+
+### Flow A: "User creates a new prompt"
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant AF as AdminPromptForm
+    participant RQ as React Query
+    participant PS as promptService.createPrompt
+    participant SB as Supabase DB
+
+    U->>AF: Fills in name, body, tags, clicks "Save"
+    AF->>PS: createPrompt({ name, body, tags, is_public })
+    PS->>SB: supabase.auth.getUser() — verify identity
+    SB-->>PS: Returns authenticated user
+    PS->>SB: supabase.from('prompts').insert({...}).select().single()
+    SB-->>PS: Returns new prompt row
+    PS-->>AF: Returns prompt object
+    AF->>RQ: Optimistically adds to cache + invalidates queries
+    RQ-->>U: UI instantly shows the new prompt
+```
+
+### Flow B: "User copies a prompt from their vault"
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant PC as PromptCard
+    participant CB as Clipboard API
+    participant PS as promptService.incrementUsage
+    participant SB as Supabase DB
+
+    U->>PC: Clicks a prompt card
+    PC->>CB: navigator.clipboard.writeText(prompt.body)
+    CB-->>PC: ✓ Copied
+    PC-->>U: Shows "Copied to clipboard" overlay
+    PC->>PS: incrementUsage(prompt.id)
+    PS->>SB: Fetch current usage_count, then UPDATE +1
+    SB-->>PS: Updated row
+    Note over PC: Also optimistically updates React Query cache
+```
+
+### Flow C: "Visitor adds prompts from someone's Public Vault"
+
+```mermaid
+sequenceDiagram
+    participant V as Visitor
+    participant PV as PublicVault Page
+    participant PS as promptService.addPromptToVault
+    participant SB as Supabase DB
+
+    V->>PV: Clicks "Add Prompts to Your Vault"
+    PV-->>V: Enters selection mode → checkboxes appear
+    V->>PV: Selects 3 prompts, clicks "Add 3 Prompts"
+    PV->>PS: For each selected prompt → addPromptToVault(prompt)
+    PS->>SB: Check for duplicates (source_prompt_id or name+body match)
+    SB-->>PS: No duplicates found
+    PS->>SB: INSERT new prompt (is_public: false, source_prompt_id, attribution_username)
+    SB-->>PS: Success
+    PS-->>PV: { success: true }
+    PV-->>V: Shows "Prompts Added!" confirmation
+```
+
+### Flow D: "New Google user signs up"
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant Auth as Auth Page
+    participant SB as Supabase Auth
+    participant AC as AuthContext
+    participant AS as authService
+    participant DB as profiles table
+    participant CP as CompleteProfile
+
+    U->>Auth: Clicks "Continue with Google"
+    Auth->>SB: supabase.auth.signInWithOAuth({ provider: 'google' })
+    SB-->>U: Redirects to Google → user authorizes → redirects back
+    SB->>AC: onAuthStateChange fires with session
+    AC->>AS: handleAuthenticatedUser → ensureProfile(user)
+    AS->>DB: SELECT * FROM profiles WHERE id = user.id
+    DB-->>AS: No profile found (PGRST116)
+    AS->>DB: INSERT new profile (username: null, plan: 'FREE')
+    DB-->>AS: Returns new profile
+    AS-->>AC: Profile has username === null
+    AC->>CP: Redirect to /complete-profile
+    CP-->>U: Shows "Choose your username" form
+    U->>CP: Enters username, clicks Continue
+    CP->>AS: updateProfile(userId, { username, full_name })
+    AS->>DB: UPDATE profiles SET username = '...'
+    CP-->>U: Hard redirect to /admin via window.location.href
+```
+
+---
+
+## 7. Architectural Audit
+
+### Where is business logic located?
+
+| Business Logic | Location | Notes |
+|------------|----------|-------|
+| **Plan permission rules** | [plans.js](file:///d:/CODING/prompter/src/lib/plans.js) | ✅ Cleanly centralized. Single source of truth. |
+| **Authentication flow** | [AuthContext.jsx](file:///d:/CODING/prompter/src/lib/AuthContext.jsx) | Core auth orchestration — session checking, profile merging, redirects |
+| **Profile creation ("ensure")** | [authService.js](file:///d:/CODING/prompter/src/services/authService.js) | Auto-creates profile on first login, handles avatar defaults |
+| **Prompt CRUD** | [promptService.js](file:///d:/CODING/prompter/src/services/promptService.js) | All database operations for prompts |
+| **Duplicate detection** | [promptService.js](file:///d:/CODING/prompter/src/services/promptService.js) `addPromptToVault` | Prevents adding the same prompt twice |
+| **Username validation** | [Profile.jsx](file:///d:/CODING/prompter/src/pages/Profile.jsx) + [CompleteProfile.jsx](file:///d:/CODING/prompter/src/pages/CompleteProfile.jsx) | ⚠️ Duplicated across two pages |
+| **Auth guards (redirect if not logged in)** | Individual pages (Landing, Admin, Profile) | ⚠️ Each page has its own `useEffect` redirect logic |
+| **Optimistic delete with undo** | [Admin.jsx](file:///d:/CODING/prompter/src/pages/Admin.jsx) | UI-level business logic embedded in a page component |
+| **Feature flag gating** | [featureFlags.js](file:///d:/CODING/prompter/src/config/featureFlags.js) + [PromptCard.jsx](file:///d:/CODING/prompter/src/components/PromptCard.jsx) | Simple env-var driven toggle |
+
+---
+
+### Which parts are cleanly separated? ✅
+
+| Area | Why it's clean |
+|------|---------------|
+| **Plan system** (`plans.js` + `usePlan.js`) | Perfect separation. The rules live in one file, the React binding in another. Adding a new feature or plan is a one-line change. No business logic leaks into UI. |
+| **Services layer** (`authService.js`, `promptService.js`) | All Supabase calls are isolated behind service functions. Pages never call `supabase.from(...)` directly for prompt operations — they use service wrappers. |
+| **Design system** (Tailwind config + `index.css`) | CSS variables and Tailwind theme tokens are centralized, ensuring consistent look across all pages. |
+| **React Query caching** | Query keys are consistent (`admin-prompts`, `landing-prompts`) and the cache is manipulated via the queryClient rather than ad-hoc state. |
+
+---
+
+### Which parts are tightly coupled? ⚠️
+
+| Problem | What's going on | Impact |
+|---------|----------------|--------|
+| **Auth guard copy-paste** | Landing, Admin, and Profile each independently check `isLoadingAuth && !isAuthenticated` and redirect. This same pattern is written 3 times instead of being a shared wrapper or route guard. | If you change the redirect logic, you have to change it in 3 places. Easy to miss one. |
+| **Username validation duplication** | The regex `^[a-z0-9_]{3,20}$` and the "check if taken" logic appears in both `Profile.jsx` (with debounce) and `CompleteProfile.jsx` (inline). | Updating the rules in one place but forgetting the other would create inconsistent behavior. |
+| **PromptCard knows too much** | `PromptCard` handles clipboard copying, usage tracking, vault-adding, route detection (`/public/`, `/vault/`), auth redirection, AND selection mode. It's doing 5–6 jobs. | Hard to test, hard to modify one behavior without risking the others. |
+| **Direct Supabase calls in pages** | `Profile.jsx` calls `supabase.storage` and `supabase.from('profiles')` directly (for avatar upload and username availability check), bypassing the service layer. `PublicVault.jsx` and `SharedVault.jsx` also query `supabase.from('profiles')` directly. | Inconsistent data access pattern — some pages go through services, some don't. |
+| **Legacy + live data layer coexistence** | `promptService.js` still contains the old localStorage-based `promptService` object alongside the new Supabase exports. The old `storageService.js` is still imported. | Dead code confusion. A new developer would struggle to know which functions are actually used. |
+| **Auth page's self-contained CSS** | `Auth.jsx` and `CompleteProfile.jsx` inject their own `<style>` tags with hardcoded pixel values and colors, completely outside the Tailwind design system. | Two styling systems in one app. Changing your theme tokens in Tailwind won't affect these pages. |
+
+---
+
+### Summary Scorecard
+
+| Dimension | Rating | Notes |
+|-----------|--------|-------|
+| **Plan/Permission logic** | ⭐⭐⭐⭐⭐ | Textbook clean. Centralized, extensible, well-documented. |
+| **Service layer** | ⭐⭐⭐⭐ | Good separation, but bypassed in some pages. |
+| **Auth flow** | ⭐⭐⭐ | Works, but auth guards are duplicated across pages. |
+| **Component responsibility** | ⭐⭐⭐ | Most components are focused; `PromptCard` is overloaded. |
+| **Code hygiene** | ⭐⭐⭐ | Legacy dead code still present. Dual styling systems. |
+| **Database design** | ⭐⭐⭐⭐ | Clean normalized schema with forward-looking fields (attribution, source tracking). |
+| **Scalability readiness** | ⭐⭐⭐ | Plan system is ready to scale; data layer needs server-side security (RLS policies). |
