@@ -60,15 +60,19 @@ export default function PublicVault() {
   const { data: profile, isLoading: isProfileLoading } = useQuery({
     queryKey: ['public-profile', username],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('username', username)
-        .maybeSingle();
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('username', username)
+          .maybeSingle();
 
-      console.log("Fetched profile:", data);
-      
-      return data || null;
+        if (error) throw error;
+        return data || null;
+      } catch (err) {
+        console.error('[VAULT ERROR]', err);
+        return null;
+      }
     },
     retry: 1
   });
@@ -77,8 +81,13 @@ export default function PublicVault() {
   const { data: prompts = [], isLoading: isPromptsLoading } = useQuery({
     queryKey: ['public-prompts', profile?.id],
     queryFn: async () => {
-      const data = await getPublicPromptsByUserId(profile.id);
-      return data || [];
+      try {
+        const data = await getPublicPromptsByUserId(profile.id);
+        return data || [];
+      } catch (err) {
+        console.error('[VAULT ERROR]', err);
+        return [];
+      }
     },
     enabled: !!profile?.id,
   });

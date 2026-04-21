@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useEffect } from 'react';
+import React, { createContext, useState, useContext, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { authService } from '@/services/authService';
 import { supabase } from '@/lib/supabase';
@@ -15,13 +15,14 @@ export const AuthProvider = ({ children }) => {
   const [isLoadingPublicSettings, setIsLoadingPublicSettings] = useState(false);
   const [authError, setAuthError] = useState(null);
   const [appPublicSettings, setAppPublicSettings] = useState(null);
+  const handledUserRef = useRef(null);
 
   useEffect(() => {
     const init = async () => {
       const { data: { session } } = await supabase.auth.getSession();
 
       if (session?.user) {
-        await handleAuthenticatedUser(session.user);
+        handleAuthenticatedUser(session.user);
       } else {
         setIsLoadingAuth(false);
       }
@@ -32,12 +33,12 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+      (event, session) => {
         console.log("AUTH EVENT:", event);
 
         if (session?.user) {
           handleAuthenticatedUser(session.user);
-        } else {
+        } else if (!session?.user) {
           setUser(null);
           setIsAuthenticated(false);
           setIsLoadingAuth(false);
@@ -57,45 +58,46 @@ export const AuthProvider = ({ children }) => {
 
 
 
-  const handleAuthenticatedUser = async (user) => {
-    try {
-      setIsLoadingAuth(true);
+  const handleAuthenticatedUser = (authUser) => {
+    if (handledUserRef.current === authUser.id) return;
+    handledUserRef.current = authUser.id;
 
-      const profilePromise = authService.ensureProfile(user);
+    setIsLoadingAuth(true);
 
-      setUser(user);
-      setIsAuthenticated(true);
-      setIsLoadingAuth(false);
+    const profilePromise = authService.ensureProfile(authUser).catch(err => {
+      console.error('[PROFILE ERROR]', err);
+    });
 
-      const profile = await profilePromise;
+    setUser(prev => {
+      if (prev && prev.id === authUser.id) return prev;
+      return authUser;
+    });
+    setIsAuthenticated(true);
+    setIsLoadingAuth(false);
 
-      if (profile) {
-        setUser({ ...user, ...profile });
-      }
-
-      const provider = user.app_metadata?.provider;
-
-      if (provider === 'google' && !profile?.username) {
-        if (location.pathname !== '/complete-profile') {
-          navigate('/complete-profile');
-        }
-      } else {
-        if (location.pathname === '/auth' || location.pathname === '/verified') {
-          navigate('/');
-        }
-      }
-
-    } catch (err) {
-      console.error("AUTH HANDLER ERROR:", err);
-    } finally {
-      setTimeout(() => {
-        setIsLoadingAuth(false);
-      }, 2000);
+    // Navigate immediately — don't wait for profile
+    if (location.pathname === '/auth' || location.pathname === '/verified') {
+      navigate('/');
     }
+
+    // Merge profile data in background
+    profilePromise.then(profile => {
+      if (profile) {
+        setUser(prev => ({ ...prev, ...profile }));
+
+        const provider = authUser.app_metadata?.provider;
+        if (provider === 'google' && !profile?.username) {
+          if (location.pathname !== '/complete-profile') {
+            navigate('/complete-profile');
+          }
+        }
+      }
+    });
   };
 
   const logout = async (shouldRedirect = true) => {
     await authService.logout();
+    handledUserRef.current = null;
     setUser(null);
     setIsAuthenticated(false);
     if (shouldRedirect) {
