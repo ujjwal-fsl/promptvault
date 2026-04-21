@@ -3,6 +3,7 @@ import { Pencil, Trash2 } from 'lucide-react';
 import { usePlan } from '@/hooks/usePlan';
 import { supabase } from '@/lib/supabase';
 import { useQueryClient } from '@tanstack/react-query';
+import { updatePrompt } from '@/services/promptService';
 
 export default function AdminPromptRow({ prompt, onEdit, onDelete, flashId }) {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -13,12 +14,7 @@ export default function AdminPromptRow({ prompt, onEdit, onDelete, flashId }) {
 
   const handleTogglePublic = async (prompt) => {
     try {
-      const { error } = await supabase
-        .from('prompts')
-        .update({ is_public: !prompt.is_public })
-        .eq('id', prompt.id);
-
-      if (error) throw error;
+      await updatePrompt(prompt.id, { is_public: !prompt.is_public });
 
       queryClient.invalidateQueries({ queryKey: ['admin-prompts'] });
     } catch (err) {

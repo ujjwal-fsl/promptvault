@@ -77,14 +77,7 @@ export default function PublicVault() {
   const { data: prompts = [], isLoading: isPromptsLoading } = useQuery({
     queryKey: ['public-prompts', profile?.id],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('prompts')
-        .select('*')
-        .eq('created_by', profile.id)
-        .eq('is_public', true)
-        .order('created_at', { ascending: false });
-        
-      if (error) throw error;
+      const data = await getPublicPromptsByUserId(profile.id);
       return data || [];
     },
     enabled: !!profile?.id,

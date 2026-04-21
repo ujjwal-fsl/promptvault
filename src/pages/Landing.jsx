@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { promptService, getUserPrompts } from '@/services/promptService';
+import { getUserPrompts } from '@/services/promptService';
 import { authService } from '@/services/authService';
 import { useAuth } from '@/lib/AuthContext';
 import { usePlan } from '@/hooks/usePlan';
