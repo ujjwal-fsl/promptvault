@@ -5,6 +5,7 @@ import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
+import Loader from '@/components/Loader';
 import Landing from './pages/Landing';
 import Admin from './pages/Admin';
 import SharedVault from './pages/SharedVault';
@@ -14,7 +15,7 @@ import Profile from './pages/Profile';
 import PublicVault from './pages/PublicVault';
 import Verified from './pages/Verified';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -30,6 +31,8 @@ class ErrorBoundary extends React.Component {
     console.error("ErrorBoundary caught an error:", error, errorInfo);
   }
 
+  handleReset = () => this.setState({ hasError: false, error: null });
+
   render() {
     if (this.state.hasError) {
       return (
@@ -38,12 +41,20 @@ class ErrorBoundary extends React.Component {
           <p className="text-muted-foreground text-sm max-w-lg mb-8 uppercase tracking-widest">
             The application experienced a fatal rendering error. This often occurs when component state conflicts with the expected data schema.
           </p>
-          <button 
-            onClick={() => window.location.reload()}
-            className="px-6 py-3 border border-border hover:bg-foreground hover:text-background transition-colors text-xs tracking-widest uppercase"
-          >
-            RELOAD APPLICATION
-          </button>
+          <div className="flex gap-4">
+            <button
+              onClick={this.handleReset}
+              className="px-6 py-3 border border-border hover:bg-foreground hover:text-background transition-colors text-xs tracking-widest uppercase"
+            >
+              TRY AGAIN
+            </button>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-6 py-3 border border-border hover:bg-foreground hover:text-background transition-colors text-xs tracking-widest uppercase opacity-60"
+            >
+              RELOAD APPLICATION
+            </button>
+          </div>
         </div>
       );
     }
@@ -55,13 +66,16 @@ class ErrorBoundary extends React.Component {
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
 
+  // Safe navigation guard — avoid calling navigate during render
+  useEffect(() => {
+    if (authError?.type === 'auth_required') {
+      navigateToLogin();
+    }
+  }, [authError, navigateToLogin]);
+
   // Show loading spinner while checking app public settings or auth
-  if (isLoadingAuth) {
-    return (
-      <div className="fixed inset-0 flex items-center justify-center">
-        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
-      </div>
-    );
+  if (isLoadingAuth || isLoadingPublicSettings) {
+    return <Loader />;
   }
 
   // Handle authentication errors
@@ -69,9 +83,7 @@ const AuthenticatedApp = () => {
     if (authError.type === 'user_not_registered') {
       return <UserNotRegisteredError />;
     } else if (authError.type === 'auth_required') {
-      // Redirect to login automatically
-      navigateToLogin();
-      return null;
+      return <Loader />;
     }
   }
 
