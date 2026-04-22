@@ -43,7 +43,7 @@ export const AuthProvider = ({ children }) => {
           setIsAuthenticated(false);
           setIsLoadingAuth(false);
 
-          if (location.pathname !== '/auth') {
+          if (window.location.pathname !== '/auth') {
             navigate('/auth');
           }
         }
@@ -64,19 +64,23 @@ export const AuthProvider = ({ children }) => {
 
     setIsLoadingAuth(true);
 
-    const profilePromise = authService.ensureProfile(authUser).catch(err => {
-      console.error('[PROFILE ERROR]', err);
-    });
+    const profilePromise = authService.ensureProfile(authUser)
+      .catch(err => {
+        console.error('[PROFILE ERROR]', err);
+        return null;
+      })
+      .finally(() => {
+        setIsLoadingAuth(false);
+      });
 
     setUser(prev => {
       if (prev && prev.id === authUser.id) return prev;
       return authUser;
     });
     setIsAuthenticated(true);
-    setIsLoadingAuth(false);
 
     // Navigate immediately — don't wait for profile
-    if (location.pathname === '/auth' || location.pathname === '/verified') {
+    if (window.location.pathname === '/auth' || window.location.pathname === '/verified') {
       navigate('/');
     }
 
@@ -87,7 +91,7 @@ export const AuthProvider = ({ children }) => {
 
         const provider = authUser.app_metadata?.provider;
         if (provider === 'google' && !profile?.username) {
-          if (location.pathname !== '/complete-profile') {
+          if (window.location.pathname !== '/complete-profile') {
             navigate('/complete-profile');
           }
         }
@@ -101,12 +105,12 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
     setIsAuthenticated(false);
     if (shouldRedirect) {
-      if (location.pathname !== '/') navigate('/');
+      if (window.location.pathname !== '/') navigate('/');
     }
   };
 
   const navigateToLogin = () => {
-    if (location.pathname === '/') {
+    if (window.location.pathname === '/') {
       navigate('/auth');
     }
   };
