@@ -347,10 +347,12 @@ export default function Auth() {
   const navigate = useNavigate();
   const { isAuthenticated, isLoadingAuth } = useAuth();
 
-  // Navigation loops and redirects are mapped via Context
-  if (isLoadingAuth) {
-    return <div className="min-h-screen bg-background" />;
-  }
+  // Redirect when auth state becomes true (covers all login methods)
+  useEffect(() => {
+    if (!isLoadingAuth && isAuthenticated) {
+      navigate('/');
+    }
+  }, [isAuthenticated, isLoadingAuth, navigate]);
 
   // Inject styles once
   useEffect(() => {
@@ -365,6 +367,11 @@ export default function Auth() {
       // leave styles for re-renders; remove only on unmount
     };
   }, []);
+
+  // Navigation loops and redirects are mapped via Context
+  if (isLoadingAuth) {
+    return <div className="min-h-screen bg-background" />;
+  }
 
   const handleToggle = (m) => {
     setMode(m);
@@ -399,9 +406,11 @@ export default function Auth() {
     try {
       if (mode === 'signup') {
         await authService.signup(fields.email, fields.password, fields.username.trim(), fields.fullName.trim());
+        navigate('/');
       }
       if (mode === 'login') {
         await authService.login(fields.email, fields.password);
+        navigate('/');
       }
     } catch (err) {
       console.error("LOGIN ERROR:", err);

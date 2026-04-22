@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
 import { Search, RefreshCw, Share2, ArrowLeft } from 'lucide-react';
-import { addPromptToVault, getPromptsByUserId } from '@/services/promptService';
+import { addPromptToVault, getPublicPromptsByUserId } from '@/services/promptService';
 import PromptCard from '@/components/PromptCard';
 import EmptyState from '@/components/EmptyState';
 
@@ -73,8 +73,13 @@ export default function SharedVault() {
   const { data: prompts = [], isLoading: isPromptsLoading } = useQuery({
     queryKey: ['shared-vault-prompts', profile?.id],
     queryFn: async () => {
-      const data = await getPromptsByUserId(profile.id);
-      return data || [];
+      try {
+        const data = await getPublicPromptsByUserId(profile.id);
+        return data || [];
+      } catch (err) {
+        console.error('[VAULT ERROR]', err);
+        return [];
+      }
     },
     enabled: !!profile?.id,
   });
