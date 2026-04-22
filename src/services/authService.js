@@ -2,35 +2,50 @@ import { supabase } from '@/lib/supabase';
 
 export const authService = {
   signup: async (email, password, username, fullName) => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: `${window.location.origin}/verified`
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/verified`
+        }
+      });
+      if (error) throw error;
+      if (data.user) {
+        await authService.ensureProfile(data.user, username, fullName);
       }
-    });
-    if (error) throw error;
-    if (data.user) {
-      await authService.ensureProfile(data.user, username, fullName);
+      return data;
+    } catch (err) {
+      console.error('[SERVICE ERROR] signup:', err);
+      throw err;
     }
-    return data;
   },
 
   login: async (email, password) => {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    if (error) throw error;
-    return data.user;
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (error) throw error;
+      return data.user;
+    } catch (err) {
+      console.error('[SERVICE ERROR] login:', err);
+      throw err;
+    }
   },
 
   loginWithGoogle: async () => {
-    const { data, error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-    });
-    if (error) throw error;
-    return data;
+    try {
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+      });
+      if (error) throw error;
+      return data;
+    } catch (err) {
+      console.error('[SERVICE ERROR] loginWithGoogle:', err);
+      throw err;
+    }
   },
 
   ensureProfile: async (user, username = null, fullNameOverride = null) => {
@@ -116,9 +131,14 @@ export const authService = {
   },
 
   logout: async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
-    return true;
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      return true;
+    } catch (err) {
+      console.error('[SERVICE ERROR] logout:', err);
+      throw err;
+    }
   },
 
   updateUsername: async (userId, username) => {
