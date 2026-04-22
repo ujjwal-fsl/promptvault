@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/lib/AuthContext';
 import { usePlan } from '@/hooks/usePlan';
 import { getUserPrompts, deletePrompt } from '@/services/promptService';
@@ -149,12 +149,23 @@ export default function Admin() {
 
 
   // Filter out any internally marked Soft Deleted prompts just in case service layer lets it through
-  const activePrompts = prompts.filter(p => !p.isDeleted);
+  const activePrompts = useMemo(() => {
+    return prompts.filter(p => !p.isDeleted);
+  }, [prompts]);
   
-  const filteredPrompts = activePrompts.filter(p => 
-    (p.name || '').toLowerCase().includes(search.toLowerCase()) || 
-    (p.body || '').toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredPrompts = useMemo(() => {
+    return activePrompts.filter(p => 
+      (p.name || '').toLowerCase().includes(search.toLowerCase()) || 
+      (p.body || '').toLowerCase().includes(search.toLowerCase())
+    );
+  }, [activePrompts, search]);
+
+  const prefetchLanding = () => {
+    queryClient.prefetchQuery({
+      queryKey: ['landing-prompts'],
+      queryFn: getUserPrompts,
+    });
+  };
 
   return (
     <div className="min-h-screen bg-background font-inter">
@@ -162,6 +173,7 @@ export default function Admin() {
       <header className="relative border-b border-border px-6 md:px-8 pt-12 pb-8">
         <Link
           to="/"
+          onMouseEnter={prefetchLanding}
           className="absolute top-6 right-6 md:right-8 font-mono text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
         >
           VIEW VAULT →

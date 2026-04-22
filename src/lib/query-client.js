@@ -6,6 +6,8 @@ export const queryClientInstance = new QueryClient({
 		queries: {
 			retry: 1,
 			refetchOnWindowFocus: false,
+			staleTime: 1000 * 60 * 5,
+			cacheTime: 1000 * 60 * 10,
 			onError: (error) => console.error('[QUERY ERROR]', error),
 		},
 		mutations: {

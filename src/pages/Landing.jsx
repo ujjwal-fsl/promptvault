@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useState, useEffect, useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getUserPrompts } from '@/services/promptService';
 import { authService } from '@/services/authService';
 import { useAuth } from '@/lib/AuthContext';
@@ -50,18 +50,31 @@ export default function Landing() {
     }
   });
 
-  const activePrompts = prompts.filter(p => !p.isDeleted);
+  const activePrompts = useMemo(() => {
+    return prompts.filter(p => !p.isDeleted);
+  }, [prompts]);
   
-  const filteredPrompts = activePrompts.filter(p => {
-    const matchesSearch = (p.name || '').toLowerCase().includes(search.toLowerCase()) || 
-                          (p.body || '').toLowerCase().includes(search.toLowerCase());
-    const matchesScope = publicView ? p.is_public === true : true;
-    return matchesSearch && matchesScope;
-  });
+  const filteredPrompts = useMemo(() => {
+    return activePrompts.filter(p => {
+      const matchesSearch = (p.name || '').toLowerCase().includes(search.toLowerCase()) || 
+                            (p.body || '').toLowerCase().includes(search.toLowerCase());
+      const matchesScope = publicView ? p.is_public === true : true;
+      return matchesSearch && matchesScope;
+    });
+  }, [activePrompts, search, publicView]);
+
+  const queryClient = useQueryClient();
+
+  const prefetchAdmin = () => {
+    queryClient.prefetchQuery({
+      queryKey: ['admin-prompts'],
+      queryFn: getUserPrompts,
+    });
+  };
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col selection:bg-primary selection:text-primary-foreground">
-      <CornerNav to="/admin" label="Admin" />
+      <CornerNav to="/admin" label="Admin" onMouseEnter={prefetchAdmin} />
 
       {/* Hero Structure */}
       <header className="relative w-full">

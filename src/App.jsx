@@ -6,16 +6,17 @@ import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import Loader from '@/components/Loader';
-import Landing from './pages/Landing';
-import Admin from './pages/Admin';
-import SharedVault from './pages/SharedVault';
-import Auth from './pages/Auth';
-import CompleteProfile from './pages/CompleteProfile';
-import Profile from './pages/Profile';
-import PublicVault from './pages/PublicVault';
-import Verified from './pages/Verified';
 
-import React, { useEffect } from 'react';
+import React, { Suspense, useEffect } from 'react';
+
+const Landing = React.lazy(() => import('./pages/Landing'));
+const Admin = React.lazy(() => import('./pages/Admin'));
+const SharedVault = React.lazy(() => import('./pages/SharedVault'));
+const Auth = React.lazy(() => import('./pages/Auth'));
+const CompleteProfile = React.lazy(() => import('./pages/CompleteProfile'));
+const Profile = React.lazy(() => import('./pages/Profile'));
+const PublicVault = React.lazy(() => import('./pages/PublicVault'));
+const Verified = React.lazy(() => import('./pages/Verified'));
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -89,17 +90,19 @@ const AuthenticatedApp = () => {
 
   // Render the main app
   return (
-    <Routes>
-      <Route path="/" element={<Landing />} />
-      <Route path="/auth" element={<Auth />} />
-      <Route path="/admin" element={<Admin />} />
-      <Route path="/profile" element={<Profile />} />
-      <Route path="/vault/:vaultId" element={<SharedVault />} />
-      <Route path="/public/:username" element={<PublicVault />} />
-      <Route path="/complete-profile" element={<CompleteProfile />} />
-      <Route path="/verified" element={<Verified />} />
-      <Route path="*" element={<PageNotFound />} />
-    </Routes>
+    <Suspense fallback={<Loader />}>
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route path="/auth" element={<Auth />} />
+        <Route path="/admin" element={<Admin />} />
+        <Route path="/profile" element={<Profile />} />
+        <Route path="/vault/:vaultId" element={<SharedVault />} />
+        <Route path="/public/:username" element={<PublicVault />} />
+        <Route path="/complete-profile" element={<CompleteProfile />} />
+        <Route path="/verified" element={<Verified />} />
+        <Route path="*" element={<PageNotFound />} />
+      </Routes>
+    </Suspense>
   );
 };
 
