@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
@@ -111,13 +111,17 @@ export default function PublicVault() {
     );
   }
 
-  const activePrompts = prompts.filter(p => !p.isDeleted);
+  const activePrompts = useMemo(() => {
+    return prompts.filter(p => !p.isDeleted);
+  }, [prompts]);
   
-  const filteredPrompts = activePrompts.filter(p => 
-    (p.name || '').toLowerCase().includes(search.toLowerCase()) || 
-    (p.body || '').toLowerCase().includes(search.toLowerCase()) ||
-    (p.tags?.some(tag => tag.toLowerCase().includes(search.toLowerCase())))
-  );
+  const filteredPrompts = useMemo(() => {
+    return activePrompts.filter(p => 
+      (p.name || '').toLowerCase().includes(search.toLowerCase()) || 
+      (p.body || '').toLowerCase().includes(search.toLowerCase()) ||
+      (p.tags?.some(tag => tag.toLowerCase().includes(search.toLowerCase())))
+    );
+  }, [activePrompts, search]);
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col font-mono selection:bg-primary selection:text-primary-foreground pb-24">
